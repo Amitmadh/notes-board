@@ -1,0 +1,10 @@
+# Python-generated files
+.pytest_cache/
+.coverage
+.ruff_cache/
+__pycache__/
+*.py[oc]
+
+# Virtual environments
+.venv
+.env
