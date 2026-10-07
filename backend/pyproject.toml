@@ -42,6 +42,7 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
+source = ["notes_board"]
 omit = ["tests/*"]
 
 [tool.coverage.report]
