@@ -72,8 +72,8 @@ async def read_users_me(
 
 @router.post("/register", status_code=201)
 def register(
-    body: UserCreate,
     db: Annotated[psycopg.Connection, Depends(get_db)],
+    body: UserCreate,
 ) -> User:
     if db.execute(
         "SELECT 1 FROM users WHERE username = %s", (body.username,)
@@ -89,5 +89,4 @@ def register(
         ).fetchone()
     db.commit()
     assert user is not None
-
     return user

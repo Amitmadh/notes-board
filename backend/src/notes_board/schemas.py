@@ -1,4 +1,6 @@
-from pydantic import BaseModel, SecretStr
+from typing import Annotated
+
+from pydantic import BaseModel, SecretStr, StringConstraints
 
 
 class Token(BaseModel):
@@ -19,4 +21,14 @@ class UserCreate(BaseModel):
 
 
 class UserInDB(User):
+    id: int
     hashed_password: str
+
+
+class Board(BaseModel):
+    id: int
+    name: str
+
+
+class BoardCreate(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]

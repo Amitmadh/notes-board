@@ -2,7 +2,7 @@ from fastapi import FastAPI
 
 from notes_board.db import get_connection
 from notes_board.models import create_tables
-from notes_board.routers import auth
+from notes_board.routers import auth, boards
 
 with get_connection() as conn:
     create_tables(conn)
@@ -16,3 +16,4 @@ app = FastAPI(
 )
 
 app.include_router(auth.router)
+app.include_router(boards.router)

@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
 import BoardPage from "./pages/board";
 import EntryPage from "./pages/entry";
+import UserBoardsPage from "./pages/user_boards";
 
 function AppRoutes() {
   const { user, loading } = useAuth();
@@ -12,7 +13,8 @@ function AppRoutes() {
 
   return (
     <Routes>
-      <Route path="/" element={user ? <BoardPage /> : <Navigate to="/login" replace />} />
+      <Route path="/" element={user ? <UserBoardsPage /> : <Navigate to="/login" replace />} />
+      <Route path="/boards/:id" element={user ? <BoardPage /> : <Navigate to="/login" replace />} />
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <EntryPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

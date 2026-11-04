@@ -14,7 +14,7 @@ from psycopg.rows import class_row
 from pwdlib import PasswordHash
 
 from notes_board.db import get_db
-from notes_board.schemas import Token, User, UserInDB
+from notes_board.schemas import Token, UserInDB
 
 load_dotenv()
 
@@ -36,7 +36,7 @@ def verify_password(plain_password, hashed_password):
 def get_user(db: psycopg.Connection, username: str) -> UserInDB | None:
     with db.cursor(row_factory=class_row(UserInDB)) as cur:
         return cur.execute(
-            "SELECT username, full_name, disabled, hashed_password"
+            "SELECT id, username, full_name, disabled, hashed_password"
             " FROM users WHERE username = %s",
             (username,),
         ).fetchone()
@@ -62,7 +62,7 @@ def user_from_token(
     except InvalidTokenError as err:
         raise credentials_exception from err
     user = get_user(db, username=username)
-    if user is None:
+    if not user:
         raise credentials_exception
     return user
 
@@ -72,13 +72,13 @@ def user_from_token(
 def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
     db: Annotated[psycopg.Connection, Depends(get_db)],
-):
+) -> UserInDB:
     return user_from_token(db, token, kind="access")
 
 
 async def get_current_active_user(
-    current_user: Annotated[User, Depends(get_current_user)],
-):
+    current_user: Annotated[UserInDB, Depends(get_current_user)],
+) -> UserInDB:
     if current_user.disabled:
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
