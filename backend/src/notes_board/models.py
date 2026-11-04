@@ -12,8 +12,11 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS boards (
     id SERIAL PRIMARY KEY,
     owner_id INTEGER NOT NULL REFERENCES users(id),
-    name TEXT NOT NULL
+    name TEXT NOT NULL,
+    content JSONB
 );
+
+CREATE INDEX IF NOT EXISTS boards_owner_id_idx ON boards (owner_id, id);
 """
 
 

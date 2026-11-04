@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, SecretStr, StringConstraints
 
@@ -32,3 +32,12 @@ class Board(BaseModel):
 
 class BoardCreate(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class BoardContent(BaseModel):
+    background: str | None
+    nodes: list[dict[str, Any]]
+
+
+class BoardInDB(Board):
+    content: BoardContent | None
