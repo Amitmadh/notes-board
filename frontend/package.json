@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "microcanvas": "github:Amitmadh/microCanvas#v1.1.0",
+    "oxlint-tsgolint": "^7.0.2005",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.5"
