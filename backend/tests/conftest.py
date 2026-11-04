@@ -12,7 +12,9 @@ PASSWORD = "pw12345"
 @pytest.fixture
 def client():
     # https, so the client keeps the Secure refresh cookie and sends it back.
-    return TestClient(app, base_url="https://testserver")
+    # The with runs the app's startup, which opens the connection pool.
+    with TestClient(app, base_url="https://testserver") as client:
+        yield client
 
 
 # Registers users with fresh names, and deletes them and their boards afterwards.

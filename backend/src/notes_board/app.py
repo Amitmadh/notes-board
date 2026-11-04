@@ -1,11 +1,20 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
-from notes_board.db import get_connection
+from notes_board.db import create_pool
 from notes_board.models import create_tables
 from notes_board.routers import auth, boards
 
-with get_connection() as conn:
-    create_tables(conn)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    with create_pool() as pool:
+        with pool.connection() as conn:
+            create_tables(conn)
+        app.state.pool = pool
+        yield
+
 
 app = FastAPI(
     title="notes-board",
@@ -13,6 +22,7 @@ app = FastAPI(
     version="0.1.0",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
+    lifespan=lifespan,
 )
 
 app.include_router(auth.router)
