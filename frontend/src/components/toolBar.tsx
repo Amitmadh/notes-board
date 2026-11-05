@@ -44,7 +44,7 @@ function ToolBar({ onAddShape, onAddText, onAddImage, onDelete, onColor, nodeSel
             <span className="toolbar-separator" />
             <button onClick={onAddText}>Text</button>
             <button onClick={() => imageInputRef.current?.click()}>Image</button>
-            <input ref={imageInputRef} type="file" accept="image/*" hidden onChange={pickImage} />
+            <input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/gif" hidden onChange={pickImage} />
             <span className="toolbar-separator" />
             <button onClick={onDelete} disabled={!nodeSelected}>Delete</button>
             <DropdownMenu label="Color" items={COLORS} onSelect={onColor} disabled={!nodeSelected} />

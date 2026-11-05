@@ -41,3 +41,7 @@ class BoardContent(BaseModel):
 
 class BoardInDB(Board):
     content: BoardContent | None
+
+
+class Image(BaseModel):
+    url: str

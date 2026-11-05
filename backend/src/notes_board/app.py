@@ -1,10 +1,12 @@
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from notes_board.cleanup import clean_up_hourly
 from notes_board.db import create_pool
 from notes_board.models import create_tables
-from notes_board.routers import auth, boards
+from notes_board.routers import auth, boards, images
 
 
 @asynccontextmanager
@@ -13,7 +15,14 @@ async def lifespan(app: FastAPI):
         with pool.connection() as conn:
             create_tables(conn)
         app.state.pool = pool
+        stop = threading.Event()
+        cleanup = threading.Thread(
+            target=clean_up_hourly, args=(pool, stop), daemon=True
+        )
+        cleanup.start()
         yield
+        stop.set()
+        cleanup.join()
 
 
 app = FastAPI(
@@ -27,3 +36,4 @@ app = FastAPI(
 
 app.include_router(auth.router)
 app.include_router(boards.router)
+app.include_router(images.router)

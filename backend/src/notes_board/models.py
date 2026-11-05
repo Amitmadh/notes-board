@@ -17,6 +17,16 @@ CREATE TABLE IF NOT EXISTS boards (
 );
 
 CREATE INDEX IF NOT EXISTS boards_owner_id_idx ON boards (owner_id, id);
+
+CREATE TABLE IF NOT EXISTS images (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+    content_type TEXT NOT NULL,
+    data BYTEA NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS images_board_id_idx ON images (board_id);
 """
 
 

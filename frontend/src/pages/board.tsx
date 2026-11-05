@@ -60,11 +60,24 @@ function BoardPage() {
         }
     };
 
+    const uploadImage = async (file: File) => {
+        const form = new FormData();
+        form.append("file", file);
+        const response = await authFetch(`/api/boards/${id}/images`, { method: "POST", body: form });
+        if (response.status === 413) throw new Error("Images can be at most 10 MB.");
+        if (response.status === 415) throw new Error("Only PNG, JPEG and GIF images are supported.");
+        if (!response.ok) throw new Error(`Couldn't upload the image (${response.status})`);
+        const { url } = (await response.json()) as { url: string };
+        return url;
+    };
+
     return (
         <>
             <AppHeader />
             {error && <p className="entry-error board-error" role="alert">{error}</p>}
-            {board && <CanvasComponent key={board.id} content={board.content} onChange={save} />}
+            {board && (
+                <CanvasComponent key={board.id} content={board.content} onChange={save} uploadImage={uploadImage} />
+            )}
         </>
     );
 }

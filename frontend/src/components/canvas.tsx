@@ -22,22 +22,13 @@ function createText(x: number, y: number) {
     });
 }
 
-// Reads a file as a data: URL, so the image still loads once the board is saved
-function readAsDataURL(file: File) {
-    return new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = () => reject(reader.error);
-        reader.readAsDataURL(file);
-    });
-}
-
 interface CanvasProps {
     content: CanvasJSON | null;
     onChange: (content: CanvasJSON) => void;
+    uploadImage: (file: File) => Promise<string>;
 }
 
-function CanvasComponent({ content, onChange }: CanvasProps) {
+function CanvasComponent({ content, onChange, uploadImage }: CanvasProps) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const boardRef = useRef<Canvas | null>(null);
     const [hasSelection, setHasSelection] = useState(false);
@@ -94,9 +85,9 @@ function CanvasComponent({ content, onChange }: CanvasProps) {
     const addImage = async (file: File) => {
         let image: McImage;
         try {
-            image = await McImage.load(await readAsDataURL(file), NODE_OPTIONS);
-        } catch {
-            alert(`Could not load "${file.name}" as an image.`);
+            image = await McImage.load(await uploadImage(file), NODE_OPTIONS);
+        } catch (err) {
+            alert(`Could not add "${file.name}". ${err instanceof Error ? err.message : String(err)}`);
             return;
         }
         // Read after loading, since the board may have been destroyed meanwhile
