@@ -19,9 +19,9 @@ def delete_leftover_images(conn: psycopg.Connection) -> int:
         DELETE FROM images
         WHERE created_at < now() - %s
         AND NOT EXISTS (
-            SELECT 1 FROM boards
-            WHERE boards.id = images.board_id
-            AND strpos(boards.content::text, images.id::text) > 0
+            SELECT 1 FROM board_nodes
+            WHERE board_nodes.board_id = images.board_id
+            AND strpos(board_nodes.data::text, images.id::text) > 0
         )
         """,
         (GRACE_PERIOD,),

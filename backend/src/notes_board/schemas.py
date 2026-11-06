@@ -1,6 +1,6 @@
 from typing import Annotated, Any
 
-from pydantic import BaseModel, SecretStr, StringConstraints
+from pydantic import BaseModel, ConfigDict, SecretStr, StringConstraints
 
 
 class Token(BaseModel):
@@ -34,13 +34,19 @@ class BoardCreate(BaseModel):
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class BoardContent(BaseModel):
-    background: str | None
+class BoardInDB(Board):
     nodes: list[dict[str, Any]]
 
 
-class BoardInDB(Board):
-    content: BoardContent | None
+class BoardAccess(BaseModel):
+    id: int
+
+
+class Node(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    type: str
 
 
 class Image(BaseModel):

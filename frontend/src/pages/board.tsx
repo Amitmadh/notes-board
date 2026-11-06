@@ -1,23 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import type { CanvasJSON } from "microcanvas";
+import type { McNodeJSON } from "microcanvas";
 import { useAuth } from "../auth";
 import AppHeader from "../components/appHeader";
-import CanvasComponent from "../components/canvas";
+import CanvasComponent, { type CanvasHandle } from "../components/canvas";
+import { NodeSaver } from "../nodeSaver";
 
 interface BoardInDB {
     id: number;
     name: string;
-    content: CanvasJSON | null;
+    nodes: McNodeJSON[];
 }
 
 function BoardPage() {
     const { id } = useParams();
     const { authFetch } = useAuth();
     const [board, setBoard] = useState<BoardInDB | null>(null);
+    const [saver, setSaver] = useState<NodeSaver | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const unsavedRef = useRef<CanvasJSON | null>(null);
-    const savingRef = useRef(false);
+    const canvasRef = useRef<CanvasHandle>(null);
 
     useEffect(() => {
         let ignore = false;
@@ -26,7 +27,16 @@ function BoardPage() {
                 if (response.status === 404) throw new Error("This board doesn't exist.");
                 if (!response.ok) throw new Error(`Couldn't load the board (${response.status})`);
                 const loaded = (await response.json()) as BoardInDB;
-                if (!ignore) setBoard(loaded);
+                if (ignore) return;
+                setBoard(loaded);
+                setSaver(new NodeSaver(loaded.id, authFetch, {
+                    onGone: (noteId) => {
+                        canvasRef.current?.removeNode(noteId);
+                        setError("A note you changed was deleted by someone else.");
+                    },
+                    onNoAccess: () => setError("You no longer have access to this board."),
+                    onError: setError,
+                }));
             })
             .catch((err) => {
                 if (!ignore) setError(err instanceof Error ? err.message : String(err));
@@ -35,30 +45,6 @@ function BoardPage() {
             ignore = true;
         };
     }, [authFetch, id]);
-
-    const save = async (content: CanvasJSON) => {
-        // for out of order writes
-        unsavedRef.current = content;
-        if (savingRef.current) return;
-        savingRef.current = true;
-        try {
-            while (unsavedRef.current) {
-                const next = unsavedRef.current;
-                unsavedRef.current = null;
-                const response = await authFetch(`/api/boards/${id}/content`, {
-                    method: "PUT",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(next),
-                });
-                if (!response.ok) throw new Error(`Couldn't save the board (${response.status})`);
-            }
-            setError(null);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : String(err));
-        } finally {
-            savingRef.current = false;
-        }
-    };
 
     const uploadImage = async (file: File) => {
         const form = new FormData();
@@ -75,8 +61,16 @@ function BoardPage() {
         <>
             <AppHeader />
             {error && <p className="entry-error board-error" role="alert">{error}</p>}
-            {board && (
-                <CanvasComponent key={board.id} content={board.content} onChange={save} uploadImage={uploadImage} />
+            {board && saver && (
+                <CanvasComponent
+                    key={board.id}
+                    ref={canvasRef}
+                    nodes={board.nodes}
+                    onAdd={saver.add}
+                    onUpdate={saver.update}
+                    onDelete={saver.remove}
+                    uploadImage={uploadImage}
+                />
             )}
         </>
     );

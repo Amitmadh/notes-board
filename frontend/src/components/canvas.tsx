@@ -1,69 +1,108 @@
-import { useEffect, useRef, useState } from "react";
-import { Canvas, Circle, McImage, McText, Rectangle, Shape, type CanvasJSON, type McNode } from "microcanvas";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { Canvas, Circle, McImage, McText, Rectangle, Shape, type McNode, type McNodeJSON } from "microcanvas";
 import ToolBar from "./toolBar";
 
 const ZOOM_STEP = 1.25;
 const MAX_IMAGE_SIZE = 300;
-const NODE_OPTIONS = { selectable: true, draggable: true, resizable: true };
+const BACKGROUND = "#f4f5f7";
+
+const newNodeOptions = () => ({ id: crypto.randomUUID(), selectable: true, draggable: true, resizable: true });
 
 function createShape(kind: string, x: number, y: number): McNode | undefined {
     switch (kind) {
         case "rectangle":
-            return new Rectangle({ ...NODE_OPTIONS, x, y, width: 100, height: 60, fill: "#2b4d7d" });
+            return new Rectangle({ ...newNodeOptions(), x, y, width: 100, height: 60, fill: "#2b4d7d" });
         case "circle":
-            return new Circle({ ...NODE_OPTIONS, x, y, radius: 40, fill: "#2b4d7d" });
+            return new Circle({ ...newNodeOptions(), x, y, radius: 40, fill: "#2b4d7d" });
     }
 }
 
 function createText(x: number, y: number) {
     return new McText({
-        ...NODE_OPTIONS, x, y, text: "Double-click to edit",
+        ...newNodeOptions(), x, y, text: "Double-click to edit",
         align: "left", baseline: "middle", padding: 32, background: "#d4ac63", writable: true,
     });
 }
 
-interface CanvasProps {
-    content: CanvasJSON | null;
-    onChange: (content: CanvasJSON) => void;
-    uploadImage: (file: File) => Promise<string>;
+type Fields = Record<string, unknown>;
+
+export interface CanvasHandle {
+    removeNode: (id: string) => void;
 }
 
-function CanvasComponent({ content, onChange, uploadImage }: CanvasProps) {
+interface CanvasProps {
+    nodes: McNodeJSON[];
+    onAdd: (node: McNodeJSON) => void;
+    onUpdate: (id: string, changes: Fields) => void;
+    onDelete: (id: string) => void;
+    uploadImage: (file: File) => Promise<string>;
+    ref?: Ref<CanvasHandle>;
+}
+
+function CanvasComponent({ nodes, onAdd, onUpdate, onDelete, uploadImage, ref }: CanvasProps) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const boardRef = useRef<Canvas | null>(null);
     const [hasSelection, setHasSelection] = useState(false);
-    // Kept in a ref, so a new onChange from the parent doesn't rebuild the board
-    const onChangeRef = useRef(onChange);
+
+    const sentRef = useRef(new Map<string, Fields>());
+    const changedRef = useRef(new Map<string, McNode>());
+
+    const update = (node: McNode) => {
+        const fields: Fields = node.toJSON();
+        const sent = sentRef.current.get(node.id);
+        const changes = Object.fromEntries(Object.entries(fields).filter(
+            ([key, value]) => JSON.stringify(value) !== JSON.stringify(sent?.[key])));
+        sentRef.current.set(node.id, fields);
+        changedRef.current.set(node.id, node);
+        if (Object.keys(changes).length > 0) onUpdate(node.id, changes);
+    };
+
+    // New update from the parent doesn't rebuild the board
+    const updateRef = useRef(update);
     useEffect(() => {
-        onChangeRef.current = onChange;
-    });
+        updateRef.current = update;
+    }, [update]);
 
     useEffect(() => {
         const element = canvasRef.current;
         if (!element) return;
-        const board = new Canvas(element, {background: "#f4f5f7"});
-        if (content) board.fromJSON(content);
+        const board = new Canvas(element, { background: BACKGROUND });
+        board.fromJSON({ background: BACKGROUND, nodes });
+        sentRef.current = new Map(nodes.map((node) => [node.id, { ...node }]));
+        changedRef.current.clear();
         board.requestRender();
         board.onSelect = (node) => setHasSelection(node !== null);
-        board.onChange = () => onChangeRef.current(board.toJSON());
+        board.onChange = (node) => updateRef.current(node);
         boardRef.current = board;
         return () => {
             board.destroy();
             boardRef.current = null;
         };
-    }, [content]);
+    }, [nodes]);
+
+    useImperativeHandle(ref, () => ({
+        removeNode: (id: string) => {
+            const board = boardRef.current;
+            const node = changedRef.current.get(id);
+            if (!board || !node) return;
+            board.remove(node);
+            board.requestRender();
+            sentRef.current.delete(id);
+            changedRef.current.delete(id);
+        },
+    }), []);
 
     const screenCenter = (board: Canvas) => ({ x: board.width / 2, y: board.height / 2 });
-
-    // For changes made from the toolbar
-    const changed = (board: Canvas) => onChangeRef.current(board.toJSON());
 
     const place = (board: Canvas, node: McNode) => {
         board.add(node).bringToFront(node);
         board.selected = node;
         setHasSelection(true);
         board.requestRender();
-        changed(board);
+        const json = node.toJSON() as McNodeJSON;
+        sentRef.current.set(node.id, { ...json });
+        changedRef.current.set(node.id, node);
+        onAdd(json);
     };
 
     const addShape = (kind: string) => {
@@ -85,7 +124,7 @@ function CanvasComponent({ content, onChange, uploadImage }: CanvasProps) {
     const addImage = async (file: File) => {
         let image: McImage;
         try {
-            image = await McImage.load(await uploadImage(file), NODE_OPTIONS);
+            image = await McImage.load(await uploadImage(file), newNodeOptions());
         } catch (err) {
             alert(`Could not add "${file.name}". ${err instanceof Error ? err.message : String(err)}`);
             return;
@@ -104,10 +143,13 @@ function CanvasComponent({ content, onChange, uploadImage }: CanvasProps) {
 
     const deleteSelected = () => {
         const board = boardRef.current;
-        if (!board?.selected) return;
-        board.remove(board.selected);
+        const node = board?.selected;
+        if (!board || !node) return;
+        board.remove(node);
         board.requestRender();
-        changed(board);
+        sentRef.current.delete(node.id);
+        changedRef.current.delete(node.id);
+        onDelete(node.id);
     };
 
     const changeColor = (color: string) => {
@@ -119,7 +161,7 @@ function CanvasComponent({ content, onChange, uploadImage }: CanvasProps) {
             board.selected.background = color;
         }
         board.requestRender();
-        changed(board);
+        update(board.selected);
     }
 
     const zoomBy = (factor: number) => {

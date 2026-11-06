@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from notes_board.cleanup import clean_up_hourly
 from notes_board.db import create_pool
 from notes_board.models import create_tables
-from notes_board.routers import auth, boards, images
+from notes_board.routers import auth, boards, images, nodes
 
 
 @asynccontextmanager
@@ -37,3 +37,4 @@ app = FastAPI(
 app.include_router(auth.router)
 app.include_router(boards.router)
 app.include_router(images.router)
+app.include_router(nodes.router)

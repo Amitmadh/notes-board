@@ -1,13 +1,13 @@
 from typing import Annotated
 
 import psycopg  # noqa: TC002
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from psycopg.rows import class_row
-from psycopg.types.json import Jsonb
 
+from notes_board.access import get_accessible_board
 from notes_board.auth import get_current_active_user
 from notes_board.db import get_db
-from notes_board.schemas import Board, BoardContent, BoardCreate, BoardInDB, UserInDB
+from notes_board.schemas import Board, BoardAccess, BoardCreate, BoardInDB, UserInDB
 
 router = APIRouter(prefix="/api", tags=["boards"])
 
@@ -42,31 +42,15 @@ def add_board(
 
 @router.get("/boards/{board_id}")
 def get_board(
-    board_id: int,
-    current_user: Annotated[UserInDB, Depends(get_current_active_user)],
+    access: Annotated[BoardAccess, Depends(get_accessible_board)],
     db: Annotated[psycopg.Connection, Depends(get_db)],
 ) -> BoardInDB:
-    with db.cursor(row_factory=class_row(BoardInDB)) as cur:
+    with db.cursor(row_factory=class_row(Board)) as cur:
         board = cur.execute(
-            "SELECT id, name, content FROM boards WHERE id = %s AND owner_id = %s",
-            (board_id, current_user.id),
+            "SELECT id, name FROM boards WHERE id = %s", (access.id,)
         ).fetchone()
-    if board is None:
-        raise HTTPException(status_code=404, detail="Board not found")
-    return board
-
-
-@router.put("/boards/{board_id}/content", status_code=204)
-def save_board_content(
-    board_id: int,
-    current_user: Annotated[UserInDB, Depends(get_current_active_user)],
-    db: Annotated[psycopg.Connection, Depends(get_db)],
-    content: BoardContent,
-) -> None:
-    cur = db.execute(
-        "UPDATE boards SET content = %s WHERE id = %s AND owner_id = %s",
-        (Jsonb(content.model_dump()), board_id, current_user.id),
-    )
-    if cur.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Board not found")
-    db.commit()
+    assert board is not None
+    rows = db.execute(
+        "SELECT data FROM board_nodes WHERE board_id = %s", (access.id,)
+    ).fetchall()
+    return BoardInDB(**board.model_dump(), nodes=[data for (data,) in rows])

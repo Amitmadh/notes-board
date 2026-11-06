@@ -69,9 +69,9 @@ def test_unknown_images_are_not_found(client):
     assert client.get(f"/api/images/{uuid.uuid4()}").status_code == 404
 
 
-def save_nodes(client, board_id, headers, nodes):
-    content = {"background": None, "nodes": nodes}
-    client.put(f"/api/boards/{board_id}/content", json=content, headers=headers)
+def put_on_board(client, board_id, headers, url):
+    note = {"id": "picture", "type": "image", "src": url}
+    client.post(f"/api/boards/{board_id}/nodes", json=note, headers=headers)
 
 
 # Runs the cleanup as if the image had been uploaded two days ago.
@@ -87,8 +87,8 @@ def clean_up_two_days_later(url):
 
 def test_cleanup_deletes_images_taken_off_their_board(client, auth_headers, board_id):
     url = upload(client, board_id, PNG, auth_headers).json()["url"]
-    save_nodes(client, board_id, auth_headers, [{"type": "image", "src": url}])
-    save_nodes(client, board_id, auth_headers, [])
+    put_on_board(client, board_id, auth_headers, url)
+    client.delete(f"/api/boards/{board_id}/nodes/picture", headers=auth_headers)
 
     clean_up_two_days_later(url)
     assert client.get(url).status_code == 404
@@ -96,7 +96,7 @@ def test_cleanup_deletes_images_taken_off_their_board(client, auth_headers, boar
 
 def test_cleanup_keeps_images_on_their_board(client, auth_headers, board_id):
     url = upload(client, board_id, PNG, auth_headers).json()["url"]
-    save_nodes(client, board_id, auth_headers, [{"type": "image", "src": url}])
+    put_on_board(client, board_id, auth_headers, url)
 
     clean_up_two_days_later(url)
     assert client.get(url).status_code == 200

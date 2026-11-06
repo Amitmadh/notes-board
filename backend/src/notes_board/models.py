@@ -12,11 +12,17 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS boards (
     id SERIAL PRIMARY KEY,
     owner_id INTEGER NOT NULL REFERENCES users(id),
-    name TEXT NOT NULL,
-    content JSONB
+    name TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS boards_owner_id_idx ON boards (owner_id, id);
+
+CREATE TABLE IF NOT EXISTS board_nodes (
+    board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+    node_id TEXT NOT NULL,
+    data JSONB NOT NULL,
+    PRIMARY KEY (board_id, node_id)
+);
 
 CREATE TABLE IF NOT EXISTS images (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
