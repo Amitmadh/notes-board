@@ -38,19 +38,16 @@ def update_node(
     board: Annotated[BoardAccess, Depends(get_accessible_board)],
     db: Annotated[psycopg.Connection, Depends(get_db)],
     body: dict[str, Any],
-) -> Node:
+) -> None:
     if "id" in body:
         raise HTTPException(status_code=422, detail="A note's id can't change")
-    with db.cursor(row_factory=args_row(Node.model_validate)) as cur:
-        node = cur.execute(
-            "UPDATE board_nodes SET data = data || %s"
-            " WHERE board_id = %s AND node_id = %s RETURNING data",
-            (Jsonb(body), board.id, node_id),
-        ).fetchone()
+    updated = db.execute(
+        "UPDATE board_nodes SET data = data || %s WHERE board_id = %s AND node_id = %s",
+        (Jsonb(body), board.id, node_id),
+    ).rowcount
     db.commit()
-    if node is None:
+    if updated == 0:
         raise HTTPException(status_code=409, detail="This note was deleted")
-    return node
 
 
 @router.delete("/boards/{board_id}/nodes/{node_id}", status_code=204)
