@@ -9,9 +9,8 @@ export default defineConfig({
     babel({ presets: [reactCompilerPreset()] })
   ],
   server: {
-    // Forwards API calls to FastAPI, so the browser sees one origin and needs no CORS.
     proxy: {
-      '/api': 'http://localhost:8000',
+      '/api': { target: 'http://localhost:8000', ws: true },
     },
   },
 })
