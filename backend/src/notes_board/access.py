@@ -16,7 +16,8 @@ def get_accessible_board(
 ) -> BoardAccess:
     with db.cursor(row_factory=class_row(BoardAccess)) as cur:
         board = cur.execute(
-            "SELECT id FROM boards WHERE id = %s AND owner_id = %s",
+            "SELECT board_id AS id, role FROM board_members"
+            " WHERE board_id = %s AND user_id = %s",
             (board_id, current_user.id),
         ).fetchone()
     if board is None:

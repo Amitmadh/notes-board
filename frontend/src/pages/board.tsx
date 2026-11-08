@@ -4,20 +4,23 @@ import type { McNodeJSON } from "microcanvas";
 import { useAuth } from "../auth";
 import AppHeader from "../components/appHeader";
 import CanvasComponent, { type CanvasHandle } from "../components/canvas";
+import SharePanel from "../components/sharePanel";
 import { NodeSaver } from "../nodeSaver";
 
 interface BoardInDB {
     id: number;
     name: string;
+    owner: string;
     nodes: McNodeJSON[];
 }
 
 function BoardPage() {
     const { id } = useParams();
-    const { authFetch } = useAuth();
+    const { user, authFetch } = useAuth();
     const [board, setBoard] = useState<BoardInDB | null>(null);
     const [saver, setSaver] = useState<NodeSaver | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [showMembers, setShowMembers] = useState(false);
     const canvasRef = useRef<CanvasHandle>(null);
 
     useEffect(() => {
@@ -57,9 +60,20 @@ function BoardPage() {
         return url;
     };
 
+    const isOwner = board?.owner === user?.username;
+
     return (
         <>
             <AppHeader />
+            {board && (
+                <div className="board-bar">
+                    <h2>{board.name}</h2>
+                    <button onClick={() => setShowMembers((shown) => !shown)}>
+                        {isOwner ? "Share" : "Members"}
+                    </button>
+                </div>
+            )}
+            {board && showMembers && <SharePanel boardId={board.id} owner={board.owner} />}
             {error && <p className="entry-error board-error" role="alert">{error}</p>}
             {board && saver && (
                 <CanvasComponent

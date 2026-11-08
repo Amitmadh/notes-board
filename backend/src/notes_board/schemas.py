@@ -1,4 +1,4 @@
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, SecretStr, StringConstraints
 
@@ -28,6 +28,7 @@ class UserInDB(User):
 class Board(BaseModel):
     id: int
     name: str
+    owner: str
 
 
 class BoardCreate(BaseModel):
@@ -40,6 +41,7 @@ class BoardInDB(Board):
 
 class BoardAccess(BaseModel):
     id: int
+    role: Literal["owner", "editor"]
 
 
 class Node(BaseModel):
@@ -47,6 +49,15 @@ class Node(BaseModel):
 
     id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     type: str
+
+
+class Member(BaseModel):
+    username: str
+    full_name: str | None = None
+
+
+class MemberCreate(BaseModel):
+    username: str
 
 
 class Image(BaseModel):

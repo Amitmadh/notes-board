@@ -6,10 +6,11 @@ import AppHeader from "../components/appHeader";
 interface Board {
     id: number;
     name: string;
+    owner: string;
 }
 
 function UserBoardsPage() {
-    const { authFetch } = useAuth();
+    const { user, authFetch } = useAuth();
     const navigate = useNavigate();
     // Null until the first load finishes.
     const [boards, setBoards] = useState<Board[] | null>(null);
@@ -77,7 +78,12 @@ function UserBoardsPage() {
                     <ul className="board-list">
                         {boards.map((board) => (
                             <li key={board.id}>
-                                <Link to={`/boards/${board.id}`}>{board.name}</Link>
+                                <Link to={`/boards/${board.id}`}>
+                                    {board.name}
+                                    {board.owner !== user?.username && (
+                                        <span className="board-owner">Shared by {board.owner}</span>
+                                    )}
+                                </Link>
                             </li>
                         ))}
                     </ul>

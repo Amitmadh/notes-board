@@ -4,9 +4,9 @@ from typing import Annotated
 import psycopg  # noqa: TC002
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 
-from notes_board.auth import get_current_active_user
+from notes_board.access import get_accessible_board
 from notes_board.db import get_db
-from notes_board.schemas import Image, UserInDB
+from notes_board.schemas import BoardAccess, Image
 
 router = APIRouter(prefix="/api", tags=["images"])
 
@@ -25,8 +25,7 @@ def image_type(data: bytes) -> str | None:
 
 @router.post("/boards/{board_id}/images", status_code=201)
 def upload_image(
-    board_id: int,
-    current_user: Annotated[UserInDB, Depends(get_current_active_user)],
+    board: Annotated[BoardAccess, Depends(get_accessible_board)],
     db: Annotated[psycopg.Connection, Depends(get_db)],
     file: UploadFile,
 ) -> Image:
@@ -39,14 +38,12 @@ def upload_image(
             status_code=415, detail="Only PNG, JPEG and GIF images are supported"
         )
     row = db.execute(
-        "INSERT INTO images (board_id, content_type, data)"
-        " SELECT id, %s, %s FROM boards WHERE id = %s AND owner_id = %s"
+        "INSERT INTO images (board_id, content_type, data) VALUES (%s, %s, %s)"
         " RETURNING id",
-        (content_type, data, board_id, current_user.id),
+        (board.id, content_type, data),
     ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Board not found")
     db.commit()
+    assert row is not None
     return Image(url=f"/api/images/{row[0]}")
 
 

@@ -32,8 +32,9 @@ def register(client):
 
     with get_connection() as conn:
         conn.execute(
-            "DELETE FROM boards WHERE owner_id IN"
-            " (SELECT id FROM users WHERE username = ANY(%s))",
+            "DELETE FROM boards WHERE id IN (SELECT board_id FROM board_members"
+            " JOIN users ON users.id = board_members.user_id"
+            " WHERE board_members.role = 'owner' AND users.username = ANY(%s))",
             (names,),
         )
         conn.execute("DELETE FROM users WHERE username = ANY(%s)", (names,))

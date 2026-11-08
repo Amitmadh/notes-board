@@ -19,7 +19,13 @@ def user_boards(
 ) -> list[Board]:
     with db.cursor(row_factory=class_row(Board)) as cur:
         return cur.execute(
-            "SELECT id, name FROM boards WHERE owner_id = %s ORDER BY id",
+            "SELECT boards.id, boards.name, owners.username AS owner"
+            " FROM board_members AS mine"
+            " JOIN boards ON boards.id = mine.board_id"
+            " JOIN board_members AS ownership USING (board_id)"
+            " JOIN users AS owners ON owners.id = ownership.user_id"
+            " WHERE mine.user_id = %s AND ownership.role = 'owner'"
+            " ORDER BY boards.id",
             (current_user.id,),
         ).fetchall()
 
@@ -30,14 +36,16 @@ def add_board(
     db: Annotated[psycopg.Connection, Depends(get_db)],
     body: BoardCreate,
 ) -> Board:
-    with db.cursor(row_factory=class_row(Board)) as cur:
-        board = cur.execute(
-            "INSERT INTO boards (owner_id, name) VALUES (%s, %s) RETURNING id, name",
-            (current_user.id, body.name),
-        ).fetchone()
+    row = db.execute(
+        "INSERT INTO boards (name) VALUES (%s) RETURNING id", (body.name,)
+    ).fetchone()
+    assert row is not None
+    db.execute(
+        "INSERT INTO board_members (board_id, user_id, role) VALUES (%s, %s, 'owner')",
+        (row[0], current_user.id),
+    )
     db.commit()
-    assert board is not None
-    return board
+    return Board(id=row[0], name=body.name, owner=current_user.username)
 
 
 @router.get("/boards/{board_id}")
@@ -47,7 +55,13 @@ def get_board(
 ) -> BoardInDB:
     with db.cursor(row_factory=class_row(Board)) as cur:
         board = cur.execute(
-            "SELECT id, name FROM boards WHERE id = %s", (access.id,)
+            "SELECT boards.id, boards.name, users.username AS owner"
+            " FROM boards"
+            " JOIN board_members ON board_members.board_id = boards.id"
+            " AND board_members.role = 'owner'"
+            " JOIN users ON users.id = board_members.user_id"
+            " WHERE boards.id = %s",
+            (access.id,),
         ).fetchone()
     assert board is not None
     rows = db.execute(
