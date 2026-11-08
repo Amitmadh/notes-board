@@ -87,6 +87,6 @@ def register(
             " VALUES (%s, %s, %s) RETURNING *",
             (body.username, body.full_name, hashed_password),
         ).fetchone()
-    db.commit()
     assert user is not None
+    db.commit()
     return user

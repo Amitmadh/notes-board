@@ -42,8 +42,8 @@ def upload_image(
         " RETURNING id",
         (board.id, content_type, data),
     ).fetchone()
-    db.commit()
     assert row is not None
+    db.commit()
     return Image(url=f"/api/images/{row[0]}")
 
 

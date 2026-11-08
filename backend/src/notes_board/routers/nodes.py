@@ -24,11 +24,11 @@ def add_node(
             " ON CONFLICT DO NOTHING RETURNING data",
             (board.id, body.id, Jsonb(body.model_dump())),
         ).fetchone()
-    db.commit()
     if node is None:
         raise HTTPException(
             status_code=409, detail="A note with this id already exists"
         )
+    db.commit()
     return node
 
 
@@ -45,9 +45,9 @@ def update_node(
         "UPDATE board_nodes SET data = data || %s WHERE board_id = %s AND node_id = %s",
         (Jsonb(body), board.id, node_id),
     ).rowcount
-    db.commit()
     if updated == 0:
         raise HTTPException(status_code=409, detail="This note was deleted")
+    db.commit()
 
 
 @router.delete("/boards/{board_id}/nodes/{node_id}", status_code=204)
