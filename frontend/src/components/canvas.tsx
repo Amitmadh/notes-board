@@ -1,5 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { Canvas, Circle, McImage, McText, Rectangle, Shape, type McNode, type McNodeJSON } from "microcanvas";
+import { messageOf } from "../api";
 import ToolBar from "./toolBar";
 
 const ZOOM_STEP = 1.25;
@@ -126,7 +127,7 @@ function CanvasComponent({ nodes, onAdd, onUpdate, onDelete, uploadImage, ref }:
         try {
             image = await McImage.load(await uploadImage(file), newNodeOptions());
         } catch (err) {
-            alert(`Could not add "${file.name}". ${err instanceof Error ? err.message : String(err)}`);
+            alert(`Could not add "${file.name}". ${messageOf(err)}`);
             return;
         }
         // Read after loading, since the board may have been destroyed meanwhile

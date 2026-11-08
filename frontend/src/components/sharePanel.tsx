@@ -1,5 +1,6 @@
 import { useEffect, useState, type SubmitEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { errorMessage, messageOf, readJson } from "../api";
 import { useAuth } from "../auth";
 
 interface Member {
@@ -28,12 +29,11 @@ function SharePanel({ boardId, owner }: SharePanelProps) {
         let ignore = false;
         authFetch(url)
             .then(async (response) => {
-                if (!response.ok) throw new Error(`Couldn't load the members (${response.status})`);
-                const loaded = (await response.json()) as Member[];
+                const loaded = await readJson<Member[]>(response, "Couldn't load the members");
                 if (!ignore) setMembers(loaded);
             })
             .catch((err) => {
-                if (!ignore) setError(err instanceof Error ? err.message : String(err));
+                if (!ignore) setError(messageOf(err));
             });
         return () => {
             ignore = true;
@@ -53,12 +53,11 @@ function SharePanel({ boardId, owner }: SharePanelProps) {
             });
             if (response.status === 404) throw new Error(`There's no user called "${name}".`);
             if (response.status === 409) throw new Error(`"${name}" is already on this board.`);
-            if (!response.ok) throw new Error(`Couldn't share the board (${response.status})`);
-            const member = (await response.json()) as Member;
+            const member = await readJson<Member>(response, "Couldn't share the board");
             setMembers((current) => [...(current ?? []), member].sort(byUsername));
             setUsername("");
         } catch (err) {
-            setError(err instanceof Error ? err.message : String(err));
+            setError(messageOf(err));
         } finally {
             setBusy(false);
         }
@@ -68,14 +67,14 @@ function SharePanel({ boardId, owner }: SharePanelProps) {
         setError(null);
         try {
             const response = await authFetch(`${url}/${encodeURIComponent(name)}`, { method: "DELETE" });
-            if (!response.ok) throw new Error(`Couldn't remove "${name}" (${response.status})`);
+            if (!response.ok) throw new Error(await errorMessage(response, `Couldn't remove "${name}"`));
             if (name === user?.username) {
                 void navigate("/");
                 return;
             }
             setMembers((current) => current?.filter((member) => member.username !== name) ?? null);
         } catch (err) {
-            setError(err instanceof Error ? err.message : String(err));
+            setError(messageOf(err));
         }
     };
 

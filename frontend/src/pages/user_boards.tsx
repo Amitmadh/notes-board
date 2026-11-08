@@ -1,5 +1,6 @@
 import { useEffect, useState, type SubmitEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { messageOf, readJson } from "../api";
 import { useAuth } from "../auth";
 import AppHeader from "../components/appHeader";
 
@@ -23,12 +24,11 @@ function UserBoardsPage() {
         let ignore = false;
         authFetch("/api/boards")
             .then(async (response) => {
-                if (!response.ok) throw new Error(`Couldn't load boards (${response.status})`);
-                const loaded = (await response.json()) as Board[];
+                const loaded = await readJson<Board[]>(response, "Couldn't load boards");
                 if (!ignore) setBoards(loaded);
             })
             .catch((err) => {
-                if (!ignore) setError(err instanceof Error ? err.message : String(err));
+                if (!ignore) setError(messageOf(err));
             });
         return () => {
             ignore = true;
@@ -46,11 +46,10 @@ function UserBoardsPage() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name: name.trim() }),
             });
-            if (!response.ok) throw new Error(`Couldn't create the board (${response.status})`);
-            const board = (await response.json()) as Board;
+            const board = await readJson<Board>(response, "Couldn't create the board");
             navigate(`/boards/${board.id}`);
         } catch (err) {
-            setError(err instanceof Error ? err.message : String(err));
+            setError(messageOf(err));
         } finally {
             setBusy(false);
         }

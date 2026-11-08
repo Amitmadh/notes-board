@@ -1,4 +1,5 @@
 import { useState, type SubmitEvent } from "react";
+import { messageOf } from "../api";
 import { useAuth } from "../auth";
 
 type Mode = "login" | "register";
@@ -23,7 +24,7 @@ function EntryPage() {
                 await register(username, password, fullName);
             }
         } catch (err) {
-            setError(err instanceof Error ? err.message : String(err));
+            setError(messageOf(err));
         } finally {
             setBusy(false);
         }
