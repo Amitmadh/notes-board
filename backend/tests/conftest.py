@@ -1,4 +1,5 @@
 import uuid
+from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,6 +8,25 @@ from notes_board.app import app
 from notes_board.db import get_connection
 
 PASSWORD = "pw12345"
+
+
+# A signed-in board socket. Each change returns the server's answer to it.
+class BoardSocket:
+    def __init__(self, socket):
+        self.socket = socket
+
+    def send(self, message):
+        self.socket.send_json(message)
+        return self.socket.receive_json()
+
+    def add(self, node):
+        return self.send({"type": "add_node", "node": node})
+
+    def update(self, node_id, changes):
+        return self.send({"type": "update_node", "id": node_id, "changes": changes})
+
+    def delete(self, node_id):
+        return self.send({"type": "delete_node", "id": node_id})
 
 
 @pytest.fixture
@@ -55,3 +75,28 @@ def login(client):
 @pytest.fixture
 def auth_headers(register, login):
     return login(register().json()["username"])
+
+
+# Opens a board's socket and signs in with the token, like the board page does.
+@pytest.fixture
+def connect(client):
+    @contextmanager
+    def connect(board_id, token):
+        with client.websocket_connect(f"/api/boards/{board_id}/ws") as socket:
+            socket.send_json({"type": "auth", "token": token})
+            yield socket
+
+    return connect
+
+
+# Opens a board's socket for the user the headers authorize.
+@pytest.fixture
+def open_board(connect):
+    @contextmanager
+    def open_board(board_id, headers):
+        token = headers["Authorization"].removeprefix("Bearer ")
+        with connect(board_id, token) as socket:
+            assert socket.receive_json() == {"type": "ready"}
+            yield BoardSocket(socket)
+
+    return open_board

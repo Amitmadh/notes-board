@@ -3,10 +3,13 @@ from typing import NamedTuple
 
 import psycopg
 import pytest
+from fastapi import WebSocketDisconnect
 
 from notes_board.db import get_connection
+from notes_board.routers.nodes import NO_ACCESS
 
 NOTE = {"id": "note-1", "type": "rectangle", "x": 10, "y": 20}
+ACK = {"type": "ack"}
 
 
 class User(NamedTuple):
@@ -60,13 +63,15 @@ def test_shared_board_is_listed_with_its_owner(client, alice, bob, board_id):
     assert boards == [{"id": board_id, "name": "Shared", "owner": alice.name}]
 
 
-def test_members_can_edit_the_board(client, alice, bob, board_id):
+def test_members_can_edit_the_board(client, open_board, alice, bob, board_id):
     share(client, board_id, alice, bob.name)
-    notes = f"/api/boards/{board_id}/nodes"
 
-    assert client.post(notes, json=NOTE, headers=bob.headers).status_code == 201
-    moved = client.patch(f"{notes}/note-1", json={"x": 50}, headers=alice.headers)
-    assert moved.status_code == 204
+    with (
+        open_board(board_id, bob.headers) as bobs_board,
+        open_board(board_id, alice.headers) as alices_board,
+    ):
+        assert bobs_board.add(NOTE) == ACK
+        assert alices_board.update(NOTE["id"], {"x": 50}) == ACK
     board = client.get(f"/api/boards/{board_id}", headers=bob.headers).json()
     assert board["nodes"] == [{**NOTE, "x": 50}]
 
@@ -106,6 +111,20 @@ def test_removed_members_lose_access(client, alice, bob, board_id):
     assert board.status_code == 404
     assert client.get("/api/boards", headers=bob.headers).json() == []
     assert client.delete(url, headers=alice.headers).status_code == 404
+
+
+# Bob still has the board open when he's removed.
+def test_removed_members_cant_keep_editing(client, open_board, alice, bob, board_id):
+    share(client, board_id, alice, bob.name)
+
+    with open_board(board_id, bob.headers) as board:
+        assert board.add(NOTE) == ACK
+        client.delete(f"{members_url(board_id)}/{bob.name}", headers=alice.headers)
+        with pytest.raises(WebSocketDisconnect) as closed:
+            board.update(NOTE["id"], {"x": 50})
+    assert closed.value.code == NO_ACCESS
+    board = client.get(f"/api/boards/{board_id}", headers=alice.headers).json()
+    assert board["nodes"] == [NOTE]
 
 
 def test_members_can_leave_but_not_remove_others(

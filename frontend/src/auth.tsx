@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { errorMessage, readJson } from "./api";
 
 export interface User {
     username: string;
@@ -14,26 +15,18 @@ interface AuthContextValue {
     register: (username: string, password: string, fullName: string) => Promise<void>;
     logout: () => Promise<void>;
     authFetch: (input: string, init?: RequestInit) => Promise<Response>;
+    // For connections that can't go through authFetch, like a board's socket
+    accessToken: () => string | null;
+    renewAccessToken: () => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
-
-// Turns a FastAPI error response into a message to show the user
-async function errorMessage(response: Response) {
-    try {
-        const { detail } = await response.json();
-        if (typeof detail === "string") return detail;
-        if (Array.isArray(detail) && detail[0]?.msg) return String(detail[0].msg);
-    } catch {}
-    return `Request failed (${response.status})`;
-}
 
 async function fetchUser(token: string) {
     const response = await fetch("/api/users/me/", {
         headers: { Authorization: `Bearer ${token}` },
     });
-    if (!response.ok) throw new Error(await errorMessage(response));
-    return (await response.json()) as User;
+    return readJson<User>(response);
 }
 
 let refreshing: Promise<string | null> | null = null;
@@ -80,8 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // OAuth2's password flow sends a form
             body: new URLSearchParams({ username, password }),
         });
-        if (!response.ok) throw new Error(await errorMessage(response));
-        const { access_token } = await response.json();
+        const { access_token } = await readJson<{ access_token: string }>(response);
         setUser(await fetchUser(access_token));
         tokenRef.current = access_token;
     };
@@ -104,6 +96,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     };
 
+    const accessToken = () => tokenRef.current;
+
+    const renewAccessToken = async () => {
+        const token = await refreshAccessToken();
+        if (!token) {
+            clearSession();
+            return null;
+        }
+        tokenRef.current = token;
+        return token;
+    };
+
     // Sends the access token with the request. When it has expired, gets a
     // new one and tries once more, signing out if that isn't possible.
     const authFetch = async (input: string, init: RequestInit = {}) => {
@@ -114,17 +118,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
         const response = await send();
         if (response.status !== 401) return response;
-
-        const token = await refreshAccessToken();
-        if (!token) {
-            clearSession();
-            return response;
-        }
-        tokenRef.current = token;
+        if (!(await renewAccessToken())) return response;
         return send();
     };
 
-    return <AuthContext value={{ user, loading, login, register, logout, authFetch }}>
+    return <AuthContext value={{
+        user, loading, login, register, logout, authFetch, accessToken, renewAccessToken,
+    }}>
         {children}
     </AuthContext>;
 }

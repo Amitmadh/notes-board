@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import type { McNodeJSON } from "microcanvas";
+import { messageOf, readJson } from "../api";
 import { useAuth } from "../auth";
 import AppHeader from "../components/appHeader";
 import CanvasComponent, { type CanvasHandle } from "../components/canvas";
 import SharePanel from "../components/sharePanel";
-import { NodeSaver } from "../nodeSaver";
+import { BoardSocket } from "../boardSocket";
 
 interface BoardInDB {
     id: number;
@@ -16,38 +17,40 @@ interface BoardInDB {
 
 function BoardPage() {
     const { id } = useParams();
-    const { user, authFetch } = useAuth();
+    const { user, authFetch, accessToken, renewAccessToken } = useAuth();
     const [board, setBoard] = useState<BoardInDB | null>(null);
-    const [saver, setSaver] = useState<NodeSaver | null>(null);
+    const [socket, setSocket] = useState<BoardSocket | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [showMembers, setShowMembers] = useState(false);
     const canvasRef = useRef<CanvasHandle>(null);
 
     useEffect(() => {
         let ignore = false;
+        let opened: BoardSocket | null = null;
         authFetch(`/api/boards/${id}`)
             .then(async (response) => {
                 if (response.status === 404) throw new Error("This board doesn't exist.");
-                if (!response.ok) throw new Error(`Couldn't load the board (${response.status})`);
-                const loaded = (await response.json()) as BoardInDB;
+                const loaded = await readJson<BoardInDB>(response, "Couldn't load the board");
                 if (ignore) return;
                 setBoard(loaded);
-                setSaver(new NodeSaver(loaded.id, authFetch, {
+                opened = new BoardSocket(loaded.id, { accessToken, renewAccessToken }, {
                     onGone: (noteId) => {
                         canvasRef.current?.removeNode(noteId);
                         setError("A note you changed was deleted by someone else.");
                     },
                     onNoAccess: () => setError("You no longer have access to this board."),
                     onError: setError,
-                }));
+                });
+                setSocket(opened);
             })
             .catch((err) => {
-                if (!ignore) setError(err instanceof Error ? err.message : String(err));
+                if (!ignore) setError(messageOf(err));
             });
         return () => {
             ignore = true;
+            opened?.close();
         };
-    }, [authFetch, id]);
+    }, [authFetch, accessToken, renewAccessToken, id]);
 
     const uploadImage = async (file: File) => {
         const form = new FormData();
@@ -55,8 +58,7 @@ function BoardPage() {
         const response = await authFetch(`/api/boards/${id}/images`, { method: "POST", body: form });
         if (response.status === 413) throw new Error("Images can be at most 10 MB.");
         if (response.status === 415) throw new Error("Only PNG, JPEG and GIF images are supported.");
-        if (!response.ok) throw new Error(`Couldn't upload the image (${response.status})`);
-        const { url } = (await response.json()) as { url: string };
+        const { url } = await readJson<{ url: string }>(response, "Couldn't upload the image");
         return url;
     };
 
@@ -75,14 +77,14 @@ function BoardPage() {
             )}
             {board && showMembers && <SharePanel boardId={board.id} owner={board.owner} />}
             {error && <p className="entry-error board-error" role="alert">{error}</p>}
-            {board && saver && (
+            {board && socket && (
                 <CanvasComponent
                     key={board.id}
                     ref={canvasRef}
                     nodes={board.nodes}
-                    onAdd={saver.add}
-                    onUpdate={saver.update}
-                    onDelete={saver.remove}
+                    onAdd={socket.add}
+                    onUpdate={socket.update}
+                    onDelete={socket.remove}
                     uploadImage={uploadImage}
                 />
             )}

@@ -1,6 +1,8 @@
 import pytest
+from fastapi import WebSocketDisconnect
 
 from notes_board.db import get_connection
+from notes_board.routers.nodes import UNAUTHORIZED
 
 
 def test_register_returns_the_user_without_the_password(register):
@@ -89,11 +91,19 @@ def test_logout_ends_the_session(client, register, login):
     assert client.post("/api/refresh").status_code == 401
 
 
-def test_disabled_user_is_locked_out(client, register, login):
+def test_disabled_user_is_locked_out(client, register, login, connect):
     name = register().json()["username"]
     headers = login(name)
+    board = client.post("/api/boards", json={"name": "Ideas"}, headers=headers)
     with get_connection() as conn:
         conn.execute("UPDATE users SET disabled = TRUE WHERE username = %s", (name,))
 
     assert client.get("/api/users/me/", headers=headers).status_code == 400
     assert client.post("/api/refresh").status_code == 403
+    token = headers["Authorization"].removeprefix("Bearer ")
+    with (
+        connect(board.json()["id"], token) as socket,
+        pytest.raises(WebSocketDisconnect) as closed,
+    ):
+        socket.receive_json()
+    assert closed.value.code == UNAUTHORIZED

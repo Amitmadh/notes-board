@@ -1,6 +1,13 @@
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, SecretStr, StringConstraints
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    StringConstraints,
+    TypeAdapter,
+)
 
 
 class Token(BaseModel):
@@ -49,6 +56,33 @@ class Node(BaseModel):
 
     id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     type: str
+
+
+# The first message on a board's socket.
+class SocketAuth(BaseModel):
+    type: Literal["auth"]
+    token: str
+
+
+class AddNode(BaseModel):
+    type: Literal["add_node"]
+    node: Node
+
+
+class UpdateNode(BaseModel):
+    type: Literal["update_node"]
+    id: str
+    changes: dict[str, Any]
+
+
+class DeleteNode(BaseModel):
+    type: Literal["delete_node"]
+    id: str
+
+
+NodeChange = TypeAdapter(
+    Annotated[AddNode | UpdateNode | DeleteNode, Field(discriminator="type")]
+)
 
 
 class Member(BaseModel):
