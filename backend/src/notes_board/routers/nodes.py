@@ -15,8 +15,10 @@ from pydantic import ValidationError
 
 from notes_board.access import find_board_access
 from notes_board.auth import user_from_token
+from notes_board.rooms import Room, room_for
 from notes_board.schemas import (
     AddNode,
+    Answer,
     DeleteNode,
     Node,
     NodeChange,
@@ -86,9 +88,17 @@ def sign_in(pool: ConnectionPool, board_id: int, message: str) -> int:
     return user.id
 
 
+def saved_nodes(pool: ConnectionPool, board_id: int) -> list[dict[str, Any]]:
+    with pool.connection() as db:
+        rows = db.execute(
+            "SELECT data FROM board_nodes WHERE board_id = %s", (board_id,)
+        ).fetchall()
+    return [data for (data,) in rows]
+
+
 def answer_change(
     pool: ConnectionPool, board_id: int, user_id: int, message: str
-) -> dict[str, Any]:
+) -> Answer:
     try:
         change = NodeChange.validate_json(message)
         with pool.connection() as db:
@@ -101,15 +111,37 @@ def answer_change(
                     update_node(db, board_id, node_id, changes)
                 case DeleteNode(id=node_id):
                     delete_node(db, board_id, node_id)
+            members = db.execute(
+                "SELECT user_id FROM board_members WHERE board_id = %s", (board_id,)
+            ).fetchall()
             db.commit()
     except ValidationError as err:
         detail = err.errors(
             include_url=False, include_context=False, include_input=False
         )
-        return {"type": "error", "code": "invalid", "detail": detail}
+        return Answer(reply={"type": "error", "code": "invalid", "detail": detail})
     except Rejected as err:
-        return {"type": "error", "code": err.code, "detail": err.detail}
-    return {"type": "ack"}
+        return Answer(reply={"type": "error", "code": err.code, "detail": err.detail})
+    return Answer(
+        reply={"type": "ack"},
+        change=change.model_dump(),
+        members=frozenset(member for (member,) in members),
+    )
+
+
+# Sockets of users removed from the board are closed instead.
+async def send_to_others(room: Room, sender: WebSocket, answer: Answer) -> None:
+    for socket, user_id in list(room.sockets.items()):
+        if socket is sender:
+            continue
+        try:
+            if user_id in answer.members:
+                await socket.send_json(answer.change)
+            else:
+                del room.sockets[socket]
+                await socket.close(NO_ACCESS, "Board not found")
+        except WebSocketDisconnect:
+            room.sockets.pop(socket, None)
 
 
 # The first message signs in, every message after it is a change.
@@ -120,12 +152,22 @@ async def board_socket(websocket: WebSocket, board_id: int) -> None:
     try:
         message = await websocket.receive_text()
         user_id = await run_in_threadpool(sign_in, pool, board_id, message)
-        await websocket.send_json({"type": "ready"})
-        while True:
-            message = await websocket.receive_text()
-            answer = await run_in_threadpool(
-                answer_change, pool, board_id, user_id, message
-            )
-            await websocket.send_json(answer)
+        with room_for(board_id, websocket) as room:
+            # no change is saved between reading the board and joining the room
+            async with room.lock:
+                nodes = await run_in_threadpool(saved_nodes, pool, board_id)
+                await websocket.send_json({"type": "ready", "nodes": nodes})
+                room.sockets[websocket] = user_id
+            while True:
+                message = await websocket.receive_text()
+                async with room.lock:
+                    if websocket not in room.sockets:
+                        return
+                    answer = await run_in_threadpool(
+                        answer_change, pool, board_id, user_id, message
+                    )
+                    await websocket.send_json(answer.reply)
+                    if answer.change is not None:
+                        await send_to_others(room, websocket, answer)
     except WebSocketDisconnect:
         pass

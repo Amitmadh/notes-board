@@ -85,6 +85,13 @@ NodeChange = TypeAdapter(
 )
 
 
+# A saved change, with who's still on the board to send it to.
+class Answer(BaseModel):
+    reply: dict[str, Any]
+    change: dict[str, Any] | None = None
+    members: frozenset[int] = frozenset()
+
+
 class Member(BaseModel):
     username: str
     full_name: str | None = None

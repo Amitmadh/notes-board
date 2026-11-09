@@ -2,14 +2,16 @@ import type { McNodeJSON } from "microcanvas";
 
 type Changes = Record<string, unknown>;
 
-// The server answers each change before it reads the next.
-type Change =
+// The server answers each change before it reads the next, and sends it on to
+// the board's other sockets.
+export type Change =
     { type: "add_node"; node: McNodeJSON } |
     { type: "update_node"; id: string; changes: Changes } |
     { type: "delete_node"; id: string };
 
 type ServerMessage =
-    { type: "ready" } |
+    Change |
+    { type: "ready"; nodes: McNodeJSON[] } |
     { type: "ack" } |
     { type: "error"; code: "exists" | "gone" | "invalid"; detail: unknown };
 
@@ -19,6 +21,8 @@ interface Auth {
 }
 
 interface BoardSocketCallbacks {
+    onSync: (nodes: McNodeJSON[]) => void;
+    onRemoteChange: (change: Change) => void;
     onGone: (id: string) => void;
     onNoAccess: () => void;
     onError: (message: string | null) => void;
@@ -114,7 +118,18 @@ export class BoardSocket {
                     this.failing = false;
                     this.callbacks.onError(null);
                 }
+                this.callbacks.onSync(this.withPending(message.nodes));
                 break;
+            case "add_node":
+            case "delete_node":
+                this.callbacks.onRemoteChange(message);
+                break;
+            case "update_node": {
+                // This client's unsaved values win, since the server saves them later
+                const changes = this.withoutPending(message.id, message.changes);
+                if (Object.keys(changes).length > 0) this.callbacks.onRemoteChange({ ...message, changes });
+                break;
+            }
             case "ack":
                 this.sent = null;
                 break;
@@ -131,6 +146,37 @@ export class BoardSocket {
             }
         }
         this.sendNext();
+    }
+
+    private pending() {
+        return this.sent ? [this.sent, ...this.waiting] : this.waiting;
+    }
+
+    // Applies the unsaved changes the way the server will
+    private withPending(nodes: McNodeJSON[]) {
+        const board = new Map(nodes.map((node) => [node.id, node]));
+        for (const change of this.pending()) {
+            switch (change.type) {
+                case "add_node":
+                    if (!board.has(change.node.id)) board.set(change.node.id, change.node);
+                    break;
+                case "update_node": {
+                    const node = board.get(change.id);
+                    if (node) board.set(change.id, { ...node, ...change.changes } as McNodeJSON);
+                    break;
+                }
+                case "delete_node":
+                    board.delete(change.id);
+                    break;
+            }
+        }
+        return [...board.values()];
+    }
+
+    private withoutPending(id: string, changes: Changes) {
+        const unsaved = new Set(this.pending().flatMap((change) =>
+            change.type === "update_node" && change.id === id ? Object.keys(change.changes) : []));
+        return Object.fromEntries(Object.entries(changes).filter(([key]) => !unsaved.has(key)));
     }
 
     private sendNext() {

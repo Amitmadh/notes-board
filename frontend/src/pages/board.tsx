@@ -34,8 +34,10 @@ function BoardPage() {
                 if (ignore) return;
                 setBoard(loaded);
                 opened = new BoardSocket(loaded.id, { accessToken, renewAccessToken }, {
+                    onSync: (nodes) => canvasRef.current?.sync(nodes),
+                    onRemoteChange: (change) => canvasRef.current?.applyChange(change),
                     onGone: (noteId) => {
-                        canvasRef.current?.removeNode(noteId);
+                        canvasRef.current?.applyChange({ type: "delete_node", id: noteId });
                         setError("A note you changed was deleted by someone else.");
                     },
                     onNoAccess: () => setError("You no longer have access to this board."),

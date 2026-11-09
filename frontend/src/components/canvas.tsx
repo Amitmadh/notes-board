@@ -1,6 +1,9 @@
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
-import { Canvas, Circle, McImage, McText, Rectangle, Shape, type McNode, type McNodeJSON } from "microcanvas";
+import {
+    Canvas, Circle, McImage, McText, nodeFromJSON, Rectangle, Shape, type McNode, type McNodeJSON,
+} from "microcanvas";
 import { messageOf } from "../api";
+import type { Change } from "../boardSocket";
 import ToolBar from "./toolBar";
 
 const ZOOM_STEP = 1.25;
@@ -25,10 +28,21 @@ function createText(x: number, y: number) {
     });
 }
 
+// a node's JSON fields by name, or just the ones that changed
 type Fields = Record<string, unknown>;
+const FIXED_FIELDS = new Set(["id", "type", "src"]);
+
+const changedFields = (fields: Fields, from: Fields | undefined) => Object.fromEntries(
+    Object.entries(fields).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(from?.[key]))
+);
+
+const setFields = (node: McNode, fields: Fields) => {
+    Object.assign(node, Object.fromEntries(Object.entries(fields).filter(([key]) => !FIXED_FIELDS.has(key))));
+};
 
 export interface CanvasHandle {
-    removeNode: (id: string) => void;
+    applyChange: (change: Change) => void;
+    sync: (nodes: McNodeJSON[]) => void;
 }
 
 interface CanvasProps {
@@ -45,16 +59,15 @@ function CanvasComponent({ nodes, onAdd, onUpdate, onDelete, uploadImage, ref }:
     const boardRef = useRef<Canvas | null>(null);
     const [hasSelection, setHasSelection] = useState(false);
 
+    // each note's fields as the server knows them
     const sentRef = useRef(new Map<string, Fields>());
-    const changedRef = useRef(new Map<string, McNode>());
+    // the board's notes by id
+    const nodesRef = useRef(new Map<string, McNode>());
 
     const update = (node: McNode) => {
         const fields: Fields = node.toJSON();
-        const sent = sentRef.current.get(node.id);
-        const changes = Object.fromEntries(Object.entries(fields).filter(
-            ([key, value]) => JSON.stringify(value) !== JSON.stringify(sent?.[key])));
+        const changes = changedFields(fields, sentRef.current.get(node.id));
         sentRef.current.set(node.id, fields);
-        changedRef.current.set(node.id, node);
         if (Object.keys(changes).length > 0) onUpdate(node.id, changes);
     };
 
@@ -68,9 +81,10 @@ function CanvasComponent({ nodes, onAdd, onUpdate, onDelete, uploadImage, ref }:
         const element = canvasRef.current;
         if (!element) return;
         const board = new Canvas(element, { background: BACKGROUND });
-        board.fromJSON({ background: BACKGROUND, nodes });
+        const loaded = nodes.map(nodeFromJSON).filter((node) => node !== null);
+        board.add(...loaded);
+        nodesRef.current = new Map(loaded.map((node) => [node.id, node]));
         sentRef.current = new Map(nodes.map((node) => [node.id, { ...node }]));
-        changedRef.current.clear();
         board.requestRender();
         board.onSelect = (node) => setHasSelection(node !== null);
         board.onChange = (node) => updateRef.current(node);
@@ -81,17 +95,64 @@ function CanvasComponent({ nodes, onAdd, onUpdate, onDelete, uploadImage, ref }:
         };
     }, [nodes]);
 
-    useImperativeHandle(ref, () => ({
-        removeNode: (id: string) => {
-            const board = boardRef.current;
-            const node = changedRef.current.get(id);
-            if (!board || !node) return;
-            board.remove(node);
-            board.requestRender();
-            sentRef.current.delete(id);
-            changedRef.current.delete(id);
-        },
-    }), []);
+    const addNode = (board: Canvas, json: McNodeJSON) => {
+        const node = nodeFromJSON(json);
+        if (!node) return;
+        board.add(node);
+        nodesRef.current.set(node.id, node);
+        sentRef.current.set(node.id, { ...json });
+    };
+
+    const removeNode = (board: Canvas, id: string) => {
+        const node = nodesRef.current.get(id);
+        if (node) board.remove(node);
+        nodesRef.current.delete(id);
+        sentRef.current.delete(id);
+    };
+
+    // A change from another user, marked as sent so it isn't sent back
+    const applyChange = (change: Change) => {
+        const board = boardRef.current;
+        if (!board) return;
+        switch (change.type) {
+            case "add_node":
+                if (!nodesRef.current.has(change.node.id)) addNode(board, change.node);
+                break;
+            case "update_node": {
+                const node = nodesRef.current.get(change.id);
+                if (!node) break;
+                setFields(node, change.changes);
+                sentRef.current.set(node.id, { ...sentRef.current.get(node.id), ...change.changes });
+                break;
+            }
+            case "delete_node":
+                removeNode(board, change.id);
+                break;
+        }
+        board.requestRender();
+    };
+
+    // Makes the board match the server's notes, after connecting
+    const sync = (nodes: McNodeJSON[]) => {
+        const board = boardRef.current;
+        if (!board) return;
+        const ids = new Set(nodes.map((json) => json.id));
+        for (const id of [...nodesRef.current.keys()]) {
+            if (!ids.has(id)) removeNode(board, id);
+        }
+        for (const json of nodes) {
+            const node = nodesRef.current.get(json.id);
+            if (!node) {
+                addNode(board, json);
+                continue;
+            }
+            setFields(node, changedFields({ ...json }, node.toJSON()));
+            sentRef.current.set(json.id, { ...json });
+        }
+        board.requestRender();
+    };
+
+    useImperativeHandle(ref, () => ({ applyChange, sync }));
 
     const screenCenter = (board: Canvas) => ({ x: board.width / 2, y: board.height / 2 });
 
@@ -102,7 +163,7 @@ function CanvasComponent({ nodes, onAdd, onUpdate, onDelete, uploadImage, ref }:
         board.requestRender();
         const json = node.toJSON() as McNodeJSON;
         sentRef.current.set(node.id, { ...json });
-        changedRef.current.set(node.id, node);
+        nodesRef.current.set(node.id, node);
         onAdd(json);
     };
 
@@ -146,10 +207,8 @@ function CanvasComponent({ nodes, onAdd, onUpdate, onDelete, uploadImage, ref }:
         const board = boardRef.current;
         const node = board?.selected;
         if (!board || !node) return;
-        board.remove(node);
+        removeNode(board, node.id);
         board.requestRender();
-        sentRef.current.delete(node.id);
-        changedRef.current.delete(node.id);
         onDelete(node.id);
     };
 

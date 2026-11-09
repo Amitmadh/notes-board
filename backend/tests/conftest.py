@@ -10,14 +10,22 @@ from notes_board.db import get_connection
 PASSWORD = "pw12345"
 
 
-# A signed-in board socket. Each change returns the server's answer to it.
+# A signed-in board socket, with the notes it got on signing in. Each change
+# returns the server's answer to it, and others' changes wait in self.changes.
 class BoardSocket:
-    def __init__(self, socket):
+    def __init__(self, socket, nodes):
         self.socket = socket
+        self.nodes = nodes
+        self.changes = []
 
     def send(self, message):
         self.socket.send_json(message)
-        return self.socket.receive_json()
+        while (reply := self.socket.receive_json())["type"] not in ("ack", "error"):
+            self.changes.append(reply)
+        return reply
+
+    def next_change(self):
+        return self.changes.pop(0) if self.changes else self.socket.receive_json()
 
     def add(self, node):
         return self.send({"type": "add_node", "node": node})
@@ -96,7 +104,8 @@ def open_board(connect):
     def open_board(board_id, headers):
         token = headers["Authorization"].removeprefix("Bearer ")
         with connect(board_id, token) as socket:
-            assert socket.receive_json() == {"type": "ready"}
-            yield BoardSocket(socket)
+            ready = socket.receive_json()
+            assert ready["type"] == "ready"
+            yield BoardSocket(socket, ready["nodes"])
 
     return open_board

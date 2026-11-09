@@ -127,6 +127,21 @@ def test_removed_members_cant_keep_editing(client, open_board, alice, bob, board
     assert board["nodes"] == [NOTE]
 
 
+# Bob is watching the board when he's removed.
+def test_removed_members_stop_getting_changes(client, open_board, alice, bob, board_id):
+    share(client, board_id, alice, bob.name)
+
+    with (
+        open_board(board_id, alice.headers) as alices_board,
+        open_board(board_id, bob.headers) as bobs_board,
+    ):
+        client.delete(f"{members_url(board_id)}/{bob.name}", headers=alice.headers)
+        assert alices_board.add(NOTE) == ACK
+        with pytest.raises(WebSocketDisconnect) as closed:
+            bobs_board.next_change()
+    assert closed.value.code == NO_ACCESS
+
+
 def test_members_can_leave_but_not_remove_others(
     client, new_user, alice, bob, board_id
 ):
