@@ -1,3 +1,4 @@
+from contextlib import suppress
 from typing import Any
 
 import psycopg  # noqa: TC002
@@ -15,15 +16,19 @@ from pydantic import ValidationError
 
 from notes_board.access import find_board_access
 from notes_board.auth import user_from_token
-from notes_board.rooms import Room, room_for
+from notes_board.rooms import Peer, Room, room_for
 from notes_board.schemas import (
     AddNode,
     Answer,
+    ClientMessage,
     DeleteNode,
+    LiveUpdate,
     Node,
     NodeChange,
+    SelectNode,
     SocketAuth,
     UpdateNode,
+    UserInDB,
 )
 
 router = APIRouter(prefix="/api", tags=["nodes"])
@@ -71,7 +76,7 @@ def delete_node(db: psycopg.Connection, board_id: int, node_id: str) -> None:
     )
 
 
-def sign_in(pool: ConnectionPool, board_id: int, message: str) -> int:
+def sign_in(pool: ConnectionPool, board_id: int, message: str) -> UserInDB:
     try:
         token = SocketAuth.model_validate_json(message).token
     except ValidationError as err:
@@ -85,7 +90,7 @@ def sign_in(pool: ConnectionPool, board_id: int, message: str) -> int:
             raise WebSocketException(UNAUTHORIZED, "Inactive user")
         if find_board_access(db, board_id, user.id) is None:
             raise WebSocketException(NO_ACCESS, "Board not found")
-    return user.id
+    return user
 
 
 def saved_nodes(pool: ConnectionPool, board_id: int) -> list[dict[str, Any]]:
@@ -97,10 +102,9 @@ def saved_nodes(pool: ConnectionPool, board_id: int) -> list[dict[str, Any]]:
 
 
 def answer_change(
-    pool: ConnectionPool, board_id: int, user_id: int, message: str
+    pool: ConnectionPool, board_id: int, user_id: int, change: NodeChange
 ) -> Answer:
     try:
-        change = NodeChange.validate_json(message)
         with pool.connection() as db:
             if find_board_access(db, board_id, user_id) is None:
                 raise WebSocketException(NO_ACCESS, "Board not found")
@@ -115,11 +119,6 @@ def answer_change(
                 "SELECT user_id FROM board_members WHERE board_id = %s", (board_id,)
             ).fetchall()
             db.commit()
-    except ValidationError as err:
-        detail = err.errors(
-            include_url=False, include_context=False, include_input=False
-        )
-        return Answer(reply={"type": "error", "code": "invalid", "detail": detail})
     except Rejected as err:
         return Answer(reply={"type": "error", "code": err.code, "detail": err.detail})
     return Answer(
@@ -129,45 +128,68 @@ def answer_change(
     )
 
 
-# Sockets of users removed from the board are closed instead.
-async def send_to_others(room: Room, sender: WebSocket, answer: Answer) -> None:
-    for socket, user_id in list(room.sockets.items()):
-        if socket is sender:
-            continue
-        try:
-            if user_id in answer.members:
-                await socket.send_json(answer.change)
-            else:
-                del room.sockets[socket]
+def invalid_reply(err: ValidationError) -> dict[str, Any]:
+    detail = err.errors(include_url=False, include_context=False, include_input=False)
+    return {"type": "error", "code": "invalid", "detail": detail}
+
+
+async def close_removed(room: Room, members: frozenset[int]) -> None:
+    for socket, peer in list(room.sockets.items()):
+        if peer.user_id not in members:
+            del room.sockets[socket]
+            with suppress(WebSocketDisconnect):
                 await socket.close(NO_ACCESS, "Board not found")
-        except WebSocketDisconnect:
-            room.sockets.pop(socket, None)
 
 
-# The first message signs in, every message after it is a change.
+# send live updates and selections to the others without saveing or answering
+async def relay(
+    room: Room, sender: WebSocket, peer: Peer, message: LiveUpdate | SelectNode
+) -> None:
+    peer.shown = True
+    match message:
+        case LiveUpdate():
+            await room.send_to_others(sender, {**message.model_dump(), "peer": peer.id})
+        case SelectNode(id=node_id):
+            peer.selected = node_id
+            await room.send_to_others(sender, {"type": "select", **peer.selection()})
+
+
+# The first message signs in, every message after it is a ClientMessage.
 @router.websocket("/boards/{board_id}/ws")
 async def board_socket(websocket: WebSocket, board_id: int) -> None:
     pool: ConnectionPool = websocket.app.state.pool
     await websocket.accept()
     try:
         message = await websocket.receive_text()
-        user_id = await run_in_threadpool(sign_in, pool, board_id, message)
-        with room_for(board_id, websocket) as room:
+        user = await run_in_threadpool(sign_in, pool, board_id, message)
+        peer = Peer(user.id, user.username)
+        async with room_for(board_id, websocket, peer) as room:
             # no change is saved between reading the board and joining the room
             async with room.lock:
                 nodes = await run_in_threadpool(saved_nodes, pool, board_id)
-                await websocket.send_json({"type": "ready", "nodes": nodes})
-                room.sockets[websocket] = user_id
+                await websocket.send_json(
+                    {"type": "ready", "nodes": nodes, "selections": room.selections()}
+                )
+                room.sockets[websocket] = peer
             while True:
                 message = await websocket.receive_text()
                 async with room.lock:
                     if websocket not in room.sockets:
                         return
+                    try:
+                        change = ClientMessage.validate_json(message)
+                    except ValidationError as err:
+                        await websocket.send_json(invalid_reply(err))
+                        continue
+                    if isinstance(change, LiveUpdate | SelectNode):
+                        await relay(room, websocket, peer, change)
+                        continue
                     answer = await run_in_threadpool(
-                        answer_change, pool, board_id, user_id, message
+                        answer_change, pool, board_id, user.id, change
                     )
                     await websocket.send_json(answer.reply)
                     if answer.change is not None:
-                        await send_to_others(room, websocket, answer)
+                        await close_removed(room, answer.members)
+                        await room.send_to_others(websocket, answer.change)
     except WebSocketDisconnect:
         pass

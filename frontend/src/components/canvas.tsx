@@ -3,12 +3,13 @@ import {
     Canvas, Circle, McImage, McText, nodeFromJSON, Rectangle, Shape, type McNode, type McNodeJSON,
 } from "microcanvas";
 import { messageOf } from "../api";
-import type { Change } from "../boardSocket";
+import type { Change, PeerSelection } from "../boardSocket";
 import ToolBar from "./toolBar";
 
 const ZOOM_STEP = 1.25;
 const MAX_IMAGE_SIZE = 300;
 const BACKGROUND = "#f4f5f7";
+const PEER_COLORS = ["#df0772", "#0bffe6", "#ff9e7d", "#ffd080", "#3e3264"];
 
 const newNodeOptions = () => ({ id: crypto.randomUUID(), selectable: true, draggable: true, resizable: true });
 
@@ -32,29 +33,57 @@ function createText(x: number, y: number) {
 type Fields = Record<string, unknown>;
 const FIXED_FIELDS = new Set(["id", "type", "src"]);
 
+// for grouping changes of one of those fields
+const GEOMETRY_FIELDS = ["x", "y", "width", "height", "radius", "rotation", "scaleX", "scaleY"];
+
 const changedFields = (fields: Fields, from: Fields | undefined) => Object.fromEntries(
     Object.entries(fields).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(from?.[key]))
 );
+
+// plus all the geometry if any of it changed
+const changesToSend = (fields: Fields, sent: Fields | undefined) => {
+    const changes = changedFields(fields, sent);
+    if (GEOMETRY_FIELDS.some((key) => key in changes)) {
+        for (const key of GEOMETRY_FIELDS) {
+            if (key in fields) changes[key] = fields[key];
+        }
+    }
+    return changes;
+};
 
 const setFields = (node: McNode, fields: Fields) => {
     Object.assign(node, Object.fromEntries(Object.entries(fields).filter(([key]) => !FIXED_FIELDS.has(key))));
 };
 
+interface Peer {
+    username: string;
+    selected: string | null;
+    // notes it changed live, reset if it leaves
+    edited: Set<string>;
+}
+
 export interface CanvasHandle {
     applyChange: (change: Change) => void;
-    sync: (nodes: McNodeJSON[]) => void;
+    applyLiveChange: (peer: number, id: string, changes: Fields) => void;
+    showSelection: (selection: PeerSelection) => void;
+    removePeer: (peer: number) => void;
+    sync: (nodes: McNodeJSON[], selections: PeerSelection[]) => void;
 }
 
 interface CanvasProps {
     nodes: McNodeJSON[];
     onAdd: (node: McNodeJSON) => void;
     onUpdate: (id: string, changes: Fields) => void;
+    onLiveUpdate: (id: string, changes: Fields) => void;
+    onSelect: (id: string | null) => void;
     onDelete: (id: string) => void;
     uploadImage: (file: File) => Promise<string>;
     ref?: Ref<CanvasHandle>;
 }
 
-function CanvasComponent({ nodes, onAdd, onUpdate, onDelete, uploadImage, ref }: CanvasProps) {
+function CanvasComponent({
+    nodes, onAdd, onUpdate, onLiveUpdate, onSelect, onDelete, uploadImage, ref,
+}: CanvasProps) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const boardRef = useRef<Canvas | null>(null);
     const [hasSelection, setHasSelection] = useState(false);
@@ -63,19 +92,37 @@ function CanvasComponent({ nodes, onAdd, onUpdate, onDelete, uploadImage, ref }:
     const sentRef = useRef(new Map<string, Fields>());
     // the board's notes by id
     const nodesRef = useRef(new Map<string, McNode>());
+    const peersRef = useRef(new Map<number, Peer>());
 
     const update = (node: McNode) => {
         const fields: Fields = node.toJSON();
-        const changes = changedFields(fields, sentRef.current.get(node.id));
+        const changes = changesToSend(fields, sentRef.current.get(node.id));
         sentRef.current.set(node.id, fields);
         if (Object.keys(changes).length > 0) onUpdate(node.id, changes);
     };
 
-    // New update from the parent doesn't rebuild the board
-    const updateRef = useRef(update);
+    const liveUpdate = (node: McNode) => {
+        const changes = changesToSend(node.toJSON(), sentRef.current.get(node.id));
+        if (Object.keys(changes).length > 0) onLiveUpdate(node.id, changes);
+    };
+
+    const select = (node: McNode | null) => {
+        setHasSelection(node !== null);
+        onSelect(node?.id ?? null);
+    };
+
+    // New handlers from the parent don't rebuild the board
+    const handlersRef = useRef({ update, liveUpdate, select });
     useEffect(() => {
-        updateRef.current = update;
-    }, [update]);
+        handlersRef.current = { update, liveUpdate, select };
+    });
+
+    const drawPeers = (board: Canvas) => {
+        for (const [peer, { username, selected }] of peersRef.current) {
+            const node = selected === null ? undefined : nodesRef.current.get(selected);
+            if (node) board.drawOutline(node, PEER_COLORS[peer % PEER_COLORS.length], username);
+        }
+    };
 
     useLayoutEffect(() => {
         const element = canvasRef.current;
@@ -86,8 +133,10 @@ function CanvasComponent({ nodes, onAdd, onUpdate, onDelete, uploadImage, ref }:
         nodesRef.current = new Map(loaded.map((node) => [node.id, node]));
         sentRef.current = new Map(nodes.map((node) => [node.id, { ...node }]));
         board.requestRender();
-        board.onSelect = (node) => setHasSelection(node !== null);
-        board.onChange = (node) => updateRef.current(node);
+        board.onSelect = (node) => handlersRef.current.select(node);
+        board.onChange = (node) => handlersRef.current.update(node);
+        board.whileChange = (node) => handlersRef.current.liveUpdate(node);
+        board.drawOverlay = () => drawPeers(board);
         boardRef.current = board;
         return () => {
             board.destroy();
@@ -132,8 +181,40 @@ function CanvasComponent({ nodes, onAdd, onUpdate, onDelete, uploadImage, ref }:
         board.requestRender();
     };
 
-    // Makes the board match the server's notes, after connecting
-    const sync = (nodes: McNodeJSON[]) => {
+    const peerOf = (peer: number) => {
+        const found = peersRef.current.get(peer) ?? { username: "", selected: null, edited: new Set<string>() };
+        peersRef.current.set(peer, found);
+        return found;
+    };
+
+    // not saved, so sentRef stays
+    const applyLiveChange = (peer: number, id: string, changes: Fields) => {
+        const node = nodesRef.current.get(id);
+        if (!node) return;
+        setFields(node, changes);
+        peerOf(peer).edited.add(id);
+        boardRef.current?.requestRender();
+    };
+
+    const showSelection = ({ peer, username, id }: PeerSelection) => {
+        Object.assign(peerOf(peer), { username, selected: id });
+        boardRef.current?.requestRender();
+    };
+
+    const removePeer = (peer: number) => {
+        for (const id of peersRef.current.get(peer)?.edited ?? []) {
+            const node = nodesRef.current.get(id);
+            const saved = sentRef.current.get(id);
+            if (node && saved) setFields(node, changedFields(saved, node.toJSON()));
+        }
+        peersRef.current.delete(peer);
+        boardRef.current?.requestRender();
+    };
+
+    // Makes the board match the server, after connecting
+    const sync = (nodes: McNodeJSON[], selections: PeerSelection[]) => {
+        peersRef.current = new Map(selections.map(({ peer, username, id }) =>
+            [peer, { username, selected: id, edited: new Set<string>() }]));
         const board = boardRef.current;
         if (!board) return;
         const ids = new Set(nodes.map((json) => json.id));
@@ -152,14 +233,15 @@ function CanvasComponent({ nodes, onAdd, onUpdate, onDelete, uploadImage, ref }:
         board.requestRender();
     };
 
-    useImperativeHandle(ref, () => ({ applyChange, sync }));
+    useImperativeHandle(ref, () => ({ applyChange, applyLiveChange, showSelection, removePeer, sync }));
 
     const screenCenter = (board: Canvas) => ({ x: board.width / 2, y: board.height / 2 });
 
     const place = (board: Canvas, node: McNode) => {
         board.add(node).bringToFront(node);
         board.selected = node;
-        setHasSelection(true);
+        // setting board.selected doesn't call onSelect
+        select(node);
         board.requestRender();
         const json = node.toJSON() as McNodeJSON;
         sentRef.current.set(node.id, { ...json });

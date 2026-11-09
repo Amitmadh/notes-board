@@ -10,12 +10,14 @@ from notes_board.db import get_connection
 PASSWORD = "pw12345"
 
 
-# A signed-in board socket, with the notes it got on signing in. Each change
-# returns the server's answer to it, and others' changes wait in self.changes.
+# A signed-in board socket, with the notes and selections it got on signing in.
+# Each change returns the server's answer to it, and others' changes wait in
+# self.changes.
 class BoardSocket:
-    def __init__(self, socket, nodes):
+    def __init__(self, socket, nodes, selections):
         self.socket = socket
         self.nodes = nodes
+        self.selections = selections
         self.changes = []
 
     def send(self, message):
@@ -35,6 +37,15 @@ class BoardSocket:
 
     def delete(self, node_id):
         return self.send({"type": "delete_node", "id": node_id})
+
+    # Live updates and selections get no answer.
+    def live(self, node_id, changes):
+        self.socket.send_json(
+            {"type": "live_update", "id": node_id, "changes": changes}
+        )
+
+    def select(self, node_id):
+        self.socket.send_json({"type": "select", "id": node_id})
 
 
 @pytest.fixture
@@ -106,6 +117,6 @@ def open_board(connect):
         with connect(board_id, token) as socket:
             ready = socket.receive_json()
             assert ready["type"] == "ready"
-            yield BoardSocket(socket, ready["nodes"])
+            yield BoardSocket(socket, ready["nodes"], ready["selections"])
 
     return open_board

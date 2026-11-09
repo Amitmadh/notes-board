@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "microcanvas": "github:Amitmadh/microCanvas#v1.1.1",
+    "microcanvas": "github:Amitmadh/microCanvas#v1.1.2",
     "oxlint-tsgolint": "^7.0.2005",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

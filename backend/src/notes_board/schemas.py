@@ -80,12 +80,25 @@ class DeleteNode(BaseModel):
     id: str
 
 
-NodeChange = TypeAdapter(
-    Annotated[AddNode | UpdateNode | DeleteNode, Field(discriminator="type")]
+NodeChange = AddNode | UpdateNode | DeleteNode
+
+
+class LiveUpdate(BaseModel):
+    type: Literal["live_update"]
+    id: str
+    changes: dict[str, Any]
+
+
+class SelectNode(BaseModel):
+    type: Literal["select"]
+    id: str | None
+
+
+ClientMessage = TypeAdapter(
+    Annotated[NodeChange | LiveUpdate | SelectNode, Field(discriminator="type")]
 )
 
 
-# A saved change, with who's still on the board to send it to.
 class Answer(BaseModel):
     reply: dict[str, Any]
     change: dict[str, Any] | None = None

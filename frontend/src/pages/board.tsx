@@ -34,8 +34,12 @@ function BoardPage() {
                 if (ignore) return;
                 setBoard(loaded);
                 opened = new BoardSocket(loaded.id, { accessToken, renewAccessToken }, {
-                    onSync: (nodes) => canvasRef.current?.sync(nodes),
+                    onSync: (nodes, selections) => canvasRef.current?.sync(nodes, selections),
                     onRemoteChange: (change) => canvasRef.current?.applyChange(change),
+                    onPeerLiveChange: (peer, noteId, changes) =>
+                        canvasRef.current?.applyLiveChange(peer, noteId, changes),
+                    onPeerSelect: (selection) => canvasRef.current?.showSelection(selection),
+                    onPeerLeft: (peer) => canvasRef.current?.removePeer(peer),
                     onGone: (noteId) => {
                         canvasRef.current?.applyChange({ type: "delete_node", id: noteId });
                         setError("A note you changed was deleted by someone else.");
@@ -86,6 +90,8 @@ function BoardPage() {
                     nodes={board.nodes}
                     onAdd={socket.add}
                     onUpdate={socket.update}
+                    onLiveUpdate={socket.liveUpdate}
+                    onSelect={socket.select}
                     onDelete={socket.remove}
                     uploadImage={uploadImage}
                 />

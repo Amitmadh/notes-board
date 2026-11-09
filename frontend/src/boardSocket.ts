@@ -9,9 +9,19 @@ export type Change =
     { type: "update_node"; id: string; changes: Changes } |
     { type: "delete_node"; id: string };
 
+// another user's selected note
+export interface PeerSelection {
+    peer: number;
+    username: string;
+    id: string | null;
+}
+
 type ServerMessage =
     Change |
-    { type: "ready"; nodes: McNodeJSON[] } |
+    { type: "ready"; nodes: McNodeJSON[]; selections: PeerSelection[] } |
+    { type: "live_update"; peer: number; id: string; changes: Changes } |
+    ({ type: "select" } & PeerSelection) |
+    { type: "left"; peer: number } |
     { type: "ack" } |
     { type: "error"; code: "exists" | "gone" | "invalid"; detail: unknown };
 
@@ -21,8 +31,11 @@ interface Auth {
 }
 
 interface BoardSocketCallbacks {
-    onSync: (nodes: McNodeJSON[]) => void;
+    onSync: (nodes: McNodeJSON[], selections: PeerSelection[]) => void;
     onRemoteChange: (change: Change) => void;
+    onPeerLiveChange: (peer: number, id: string, changes: Changes) => void;
+    onPeerSelect: (selection: PeerSelection) => void;
+    onPeerLeft: (peer: number) => void;
     onGone: (id: string) => void;
     onNoAccess: () => void;
     onError: (message: string | null) => void;
@@ -32,6 +45,7 @@ const UNAUTHORIZED = 4401;
 const NO_ACCESS = 4404;
 
 const RETRY_DELAY_MS = 2000;
+const LIVE_INTERVAL_MS = 50;
 
 export class BoardSocket {
     private readonly url: string;
@@ -46,6 +60,9 @@ export class BoardSocket {
     private failing = false;
     private closing = false;
     private stopped = false;
+    private live: { id: string; changes: Changes } | null = null;
+    private liveTimer: ReturnType<typeof setTimeout> | undefined;
+    private selected: string | null = null;
 
     constructor(boardId: number | string, auth: Auth, callbacks: BoardSocketCallbacks) {
         const url = new URL(`/api/boards/${boardId}/ws`, location.href);
@@ -61,7 +78,22 @@ export class BoardSocket {
     };
 
     update = (id: string, changes: Changes) => {
+        // it's older than this change
+        if (this.live?.id === id) this.live = null;
         this.push({ type: "update_node", id, changes });
+    };
+
+    // throttled, and not saved or answered
+    liveUpdate = (id: string, changes: Changes) => {
+        if (this.closing || this.stopped) return;
+        this.live = { id, changes };
+        if (this.liveTimer === undefined) this.sendLive();
+    };
+
+    select = (id: string | null) => {
+        if (this.closing || this.stopped) return;
+        this.selected = id;
+        if (this.ready) this.socket?.send(JSON.stringify({ type: "select", id }));
     };
 
     remove = (id: string) => {
@@ -118,7 +150,9 @@ export class BoardSocket {
                     this.failing = false;
                     this.callbacks.onError(null);
                 }
-                this.callbacks.onSync(this.withPending(message.nodes));
+                this.callbacks.onSync(this.withPending(message.nodes), message.selections);
+                // lost with the old socket
+                if (this.selected !== null) this.select(this.selected);
                 break;
             case "add_node":
             case "delete_node":
@@ -130,6 +164,17 @@ export class BoardSocket {
                 if (Object.keys(changes).length > 0) this.callbacks.onRemoteChange({ ...message, changes });
                 break;
             }
+            case "live_update": {
+                const changes = this.withoutPending(message.id, message.changes);
+                if (Object.keys(changes).length > 0) this.callbacks.onPeerLiveChange(message.peer, message.id, changes);
+                break;
+            }
+            case "select":
+                this.callbacks.onPeerSelect(message);
+                break;
+            case "left":
+                this.callbacks.onPeerLeft(message.peer);
+                break;
             case "ack":
                 this.sent = null;
                 break;
@@ -173,6 +218,7 @@ export class BoardSocket {
         return [...board.values()];
     }
 
+    // drops the fields this client has unsaved changes to, since the server saves them later
     private withoutPending(id: string, changes: Changes) {
         const unsaved = new Set(this.pending().flatMap((change) =>
             change.type === "update_node" && change.id === id ? Object.keys(change.changes) : []));
@@ -188,6 +234,15 @@ export class BoardSocket {
         } else if (this.closing) {
             this.stop();
         }
+    }
+
+    private sendLive() {
+        this.liveTimer = undefined;
+        const live = this.live;
+        this.live = null;
+        if (!live || !this.socket || !this.ready) return;
+        this.socket.send(JSON.stringify({ type: "live_update", ...live }));
+        this.liveTimer = setTimeout(() => this.sendLive(), LIVE_INTERVAL_MS);
     }
 
     private closed(code: number, renewedToken: boolean) {
@@ -219,7 +274,9 @@ export class BoardSocket {
         this.stopped = true;
         this.waiting.length = 0;
         this.sent = null;
+        this.live = null;
         clearTimeout(this.retryTimer);
+        clearTimeout(this.liveTimer);
         const socket = this.socket;
         this.socket = null;
         socket?.close();
