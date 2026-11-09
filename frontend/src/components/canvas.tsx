@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { Canvas, Circle, McImage, McText, Rectangle, Shape, type McNode, type McNodeJSON } from "microcanvas";
 import { messageOf } from "../api";
 import ToolBar from "./toolBar";
@@ -64,7 +64,7 @@ function CanvasComponent({ nodes, onAdd, onUpdate, onDelete, uploadImage, ref }:
         updateRef.current = update;
     }, [update]);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         const element = canvasRef.current;
         if (!element) return;
         const board = new Canvas(element, { background: BACKGROUND });
