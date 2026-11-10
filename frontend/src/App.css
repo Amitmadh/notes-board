@@ -42,6 +42,17 @@
   cursor: default;
 }
 
+.toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.icon {
+  flex-shrink: 0;
+  height: 1lh;
+}
+
 .dropdown {
   position: relative;
 }
@@ -74,6 +85,10 @@
   height: 14px;
   border: 1px solid var(--border);
   border-radius: 3px;
+}
+
+.swatch-none {
+  background: linear-gradient(to top right, transparent 44%, #cd2435 44% 56%, transparent 56%);
 }
 
 .toolbar-separator {

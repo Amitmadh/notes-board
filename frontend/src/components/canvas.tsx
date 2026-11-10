@@ -1,31 +1,48 @@
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import {
-    Canvas, Circle, McImage, McText, nodeFromJSON, Rectangle, Shape, type McNode, type McNodeJSON,
+    Arrow, Canvas, Circle, Cursor, Diamond, Hexagon, McImage, McText, nodeFromJSON, Rectangle, Shape, Star, Triangle,
+    type McNode, type McNodeJSON,
 } from "microcanvas";
 import { messageOf } from "../api";
 import type { Change, PeerSelection } from "../boardSocket";
 import ToolBar from "./toolBar";
 
 const ZOOM_STEP = 1.25;
+const ROTATE_STEP = Math.PI / 12;
 const MAX_IMAGE_SIZE = 300;
 const BACKGROUND = "#f4f5f7";
 const PEER_COLORS = ["#df0772", "#0bffe6", "#ff9e7d", "#ffd080", "#3e3264"];
 
 const newNodeOptions = () => ({ id: crypto.randomUUID(), selectable: true, draggable: true, resizable: true });
 
+// with a border in the fill's color, so a shape shows even without a fill
+const SHAPE_STYLE = { fill: "#2b4d7d", stroke: "#2b4d7d", strokeWidth: 2 };
+const NOTE_WIDTH = 160;
+
+// shapes that fill a box, with the size each starts at
+const BOX_SHAPES = new Map([
+    ["rectangle", { shape: Rectangle, width: 100, height: 60 }],
+    ["triangle", { shape: Triangle, width: 100, height: 90 }],
+    ["diamond", { shape: Diamond, width: 100, height: 100 }],
+    ["hexagon", { shape: Hexagon, width: 100, height: 90 }],
+    ["star", { shape: Star, width: 100, height: 100 }],
+    ["arrow", { shape: Arrow, width: 120, height: 60 }],
+    ["cursor", { shape: Cursor, width: 40, height: 60 }],
+]);
+
+// centered on x, y
 function createShape(kind: string, x: number, y: number): McNode | undefined {
-    switch (kind) {
-        case "rectangle":
-            return new Rectangle({ ...newNodeOptions(), x, y, width: 100, height: 60, fill: "#2b4d7d" });
-        case "circle":
-            return new Circle({ ...newNodeOptions(), x, y, radius: 40, fill: "#2b4d7d" });
-    }
+    if (kind === "circle") return new Circle({ ...newNodeOptions(), ...SHAPE_STYLE, x, y, radius: 40 });
+    const box = BOX_SHAPES.get(kind);
+    if (!box) return undefined;
+    const { width, height } = box;
+    return new box.shape({ ...newNodeOptions(), ...SHAPE_STYLE, x: x - width / 2, y: y - height / 2, width, height });
 }
 
-function createText(x: number, y: number) {
+function createNote(x: number, y: number) {
     return new McText({
-        ...newNodeOptions(), x, y, text: "Double-click to edit",
-        align: "left", baseline: "middle", padding: 32, background: "#d4ac63", writable: true,
+        ...newNodeOptions(), x: x - NOTE_WIDTH / 2, y, text: "Double-click to edit", width: NOTE_WIDTH,
+        align: "left", baseline: "middle", padding: 16, background: "#d4ac63", cornerRadius: 4, writable: true,
     });
 }
 
@@ -86,7 +103,7 @@ function CanvasComponent({
 }: CanvasProps) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const boardRef = useRef<Canvas | null>(null);
-    const [hasSelection, setHasSelection] = useState(false);
+    const [selected, setSelected] = useState<McNode | null>(null);
 
     // each note's fields as the server knows them
     const sentRef = useRef(new Map<string, Fields>());
@@ -107,7 +124,7 @@ function CanvasComponent({
     };
 
     const select = (node: McNode | null) => {
-        setHasSelection(node !== null);
+        setSelected(node);
         onSelect(node?.id ?? null);
     };
 
@@ -258,11 +275,11 @@ function CanvasComponent({
         place(board, node);
     };
 
-    const addText = () => {
+    const addNote = () => {
         const board = boardRef.current;
         if (!board) return;
         const { x, y } = board.screenToBoard(screenCenter(board));
-        place(board, createText(x, y));
+        place(board, createNote(x, y));
     };
 
     const addImage = async (file: File) => {
@@ -294,7 +311,8 @@ function CanvasComponent({
         onDelete(node.id);
     };
 
-    const changeColor = (color: string) => {
+    // null is transparent
+    const changeColor = (color: string | null) => {
         const board = boardRef.current;
         if (!board?.selected) return;
         if (board.selected instanceof Shape) {
@@ -305,6 +323,35 @@ function CanvasComponent({
         board.requestRender();
         update(board.selected);
     }
+
+    // around the middle, since a node turns around its position
+    const rotateSelected = (angle: number) => {
+        const board = boardRef.current;
+        const node = board?.selected;
+        if (!board || !node) return;
+        const { x, y, width, height } = node.getLocalBounds();
+        const middle = { x: x + width / 2, y: y + height / 2 };
+        const before = node.localToBoard(middle);
+        node.rotation += angle;
+        const after = node.localToBoard(middle);
+        node.x += before.x - after.x;
+        node.y += before.y - after.y;
+        board.requestRender();
+        update(node);
+    };
+
+    // changes the selected node if it's of the type
+    const changeSelected = <T extends McNode>(type: abstract new (...args: never) => T, change: (node: T) => void) => {
+        const node = boardRef.current?.selected;
+        if (!(node instanceof type)) return;
+        change(node);
+        boardRef.current?.requestRender();
+        update(node);
+    };
+
+    const changeBorderColor = (color: string) => changeSelected(Shape, (shape) => { shape.stroke = color; });
+    const changeTextColor = (color: string) => changeSelected(McText, (note) => { note.fill = color; });
+    const changeTextSize = (size: number) => changeSelected(McText, (note) => { note.fontSize = size; });
 
     const zoomBy = (factor: number) => {
         const board = boardRef.current;
@@ -326,11 +373,18 @@ function CanvasComponent({
         <div className="board">
             <ToolBar
                 onAddShape={addShape}
-                onAddText={addText}
+                onAddNote={addNote}
                 onAddImage={addImage}
                 onDelete={deleteSelected}
+                onRotateLeft={() => rotateSelected(-ROTATE_STEP)}
+                onRotateRight={() => rotateSelected(ROTATE_STEP)}
                 onColor={changeColor}
-                nodeSelected={hasSelection}
+                onBorderColor={changeBorderColor}
+                onTextColor={changeTextColor}
+                onTextSize={changeTextSize}
+                nodeSelected={selected !== null}
+                shapeSelected={selected instanceof Shape}
+                noteSelected={selected instanceof McText}
                 onZoomIn={() => zoomBy(ZOOM_STEP)}
                 onZoomOut={() => zoomBy(1 / ZOOM_STEP)}
                 onResetView={resetView}

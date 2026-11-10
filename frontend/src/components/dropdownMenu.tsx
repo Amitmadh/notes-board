@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { DownArrowIcon } from "./icons";
 
 export interface MenuItem<T> {
     value: T;
@@ -47,7 +48,8 @@ function DropdownMenu<T>({ label, items, onSelect, disabled = false }: DropdownM
                 disabled={disabled}
                 onClick={() => setOpen(!open)}
             >
-                {label} <span aria-hidden="true">▾</span>
+                {label}
+                <DownArrowIcon />
             </button>
             {open && !disabled && <div className="dropdown-menu" role="menu">
                 {items.map((item) => <button key={item.label} role="menuitem" onClick={() => choose(item.value)}>
