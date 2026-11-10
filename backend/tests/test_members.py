@@ -166,6 +166,26 @@ def test_the_owner_cant_leave(client, alice, board_id):
     assert board.status_code == 200
 
 
+def test_the_owner_can_delete_the_board(client, open_board, alice, bob, board_id):
+    share(client, board_id, alice, bob.name)
+    with open_board(board_id, alice.headers) as board:
+        assert board.add(NOTE) == ACK
+    response = client.delete(f"/api/boards/{board_id}", headers=alice.headers)
+    assert response.status_code == 204
+    for user in (alice, bob):
+        board = client.get(f"/api/boards/{board_id}", headers=user.headers)
+        assert board.status_code == 404
+        assert client.get("/api/boards", headers=user.headers).json() == []
+
+
+def test_only_the_owner_can_delete_the_board(client, new_user, alice, bob, board_id):
+    share(client, board_id, alice, bob.name)
+    url = f"/api/boards/{board_id}"
+    assert client.delete(url, headers=bob.headers).status_code == 403
+    assert client.delete(url, headers=new_user().headers).status_code == 404
+    assert client.get(url, headers=alice.headers).status_code == 200
+
+
 def test_a_board_has_only_one_owner(bob, board_id):
     with pytest.raises(psycopg.errors.UniqueViolation), get_connection() as conn:
         conn.execute(

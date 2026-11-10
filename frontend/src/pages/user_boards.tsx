@@ -1,8 +1,9 @@
 import { useEffect, useState, type SubmitEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { messageOf, readJson } from "../api";
+import { errorMessage, messageOf, readJson } from "../api";
 import { useAuth } from "../auth";
 import AppHeader from "../components/appHeader";
+import { DeleteIcon } from "../components/icons";
 
 interface Board {
     id: number;
@@ -55,6 +56,29 @@ function UserBoardsPage() {
         }
     };
 
+    // Deletes a board the user owns, or leaves one shared with them
+    const removeBoard = async (board: Board) => {
+        if (!user) return;
+        const owned = board.owner === user.username;
+        const question = owned
+            ? `Delete "${board.name}"? This can't be undone.`
+            : `Leave "${board.name}"? ${board.owner} would have to share it with you again.`;
+        if (!confirm(question)) return;
+        setError(null);
+        const url = owned
+            ? `/api/boards/${board.id}`
+            : `/api/boards/${board.id}/members/${encodeURIComponent(user.username)}`;
+        try {
+            const response = await authFetch(url, { method: "DELETE" });
+            if (!response.ok) {
+                throw new Error(await errorMessage(response, `Couldn't ${owned ? "delete" : "leave"} "${board.name}"`));
+            }
+            setBoards((current) => current?.filter((other) => other.id !== board.id) ?? null);
+        } catch (err) {
+            setError(messageOf(err));
+        }
+    };
+
     return (
         <>
             <AppHeader />
@@ -83,6 +107,14 @@ function UserBoardsPage() {
                                         <span className="board-owner">Shared by {board.owner}</span>
                                     )}
                                 </Link>
+                                <button
+                                    className="board-remove"
+                                    onClick={() => void removeBoard(board)}
+                                    aria-label={`${board.owner === user?.username ? "Delete" : "Leave"} ${board.name}`}
+                                    title={board.owner === user?.username ? "Delete board" : "Leave board"}
+                                >
+                                    <DeleteIcon />
+                                </button>
                             </li>
                         ))}
                     </ul>

@@ -32,6 +32,12 @@ def upload(client, board_id, data, headers):
     )
 
 
+def test_deleting_a_board_deletes_its_images(client, auth_headers, board_id):
+    url = upload(client, board_id, PNG, auth_headers).json()["url"]
+    client.delete(f"/api/boards/{board_id}", headers=auth_headers)
+    assert client.get(url).status_code == 404
+
+
 def test_uploading_needs_login(client, board_id):
     assert upload(client, board_id, PNG, headers={}).status_code == 401
 

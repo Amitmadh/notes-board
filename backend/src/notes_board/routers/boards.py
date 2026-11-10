@@ -1,7 +1,7 @@
 from typing import Annotated
 
 import psycopg  # noqa: TC002
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from psycopg.rows import class_row
 
 from notes_board.access import get_accessible_board
@@ -68,3 +68,16 @@ def get_board(
         "SELECT data FROM board_nodes WHERE board_id = %s", (access.id,)
     ).fetchall()
     return BoardInDB(**board.model_dump(), nodes=[data for (data,) in rows])
+
+
+@router.delete("/boards/{board_id}", status_code=204)
+def delete_board(
+    access: Annotated[BoardAccess, Depends(get_accessible_board)],
+    db: Annotated[psycopg.Connection, Depends(get_db)],
+) -> None:
+    if access.role != "owner":
+        raise HTTPException(
+            status_code=403, detail="Only the owner can delete this board"
+        )
+    db.execute("DELETE FROM boards WHERE id = %s", (access.id,))
+    db.commit()
