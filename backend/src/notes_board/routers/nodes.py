@@ -1,3 +1,4 @@
+from base64 import b64decode, b64encode
 from contextlib import suppress
 from typing import Any
 
@@ -12,6 +13,7 @@ from fastapi import (
 from fastapi.concurrency import run_in_threadpool
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool  # noqa: TC002
+from pycrdt import Doc, Text
 from pydantic import ValidationError
 
 from notes_board.access import find_board_access
@@ -22,6 +24,7 @@ from notes_board.schemas import (
     Answer,
     ClientMessage,
     DeleteNode,
+    EditText,
     LiveUpdate,
     Node,
     NodeChange,
@@ -67,6 +70,31 @@ def update_node(
     ).rowcount
     if updated == 0:
         raise Rejected("gone", "This note was deleted")
+
+
+def edit_text(
+    db: psycopg.Connection, board_id: int, node_id: str, update: bytes
+) -> None:
+    note = db.execute(
+        "SELECT data->>'ytext', data->>'text' FROM board_nodes"
+        " WHERE board_id = %s AND node_id = %s AND data->>'type' = 'text'",
+        (board_id, node_id),
+    ).fetchone()
+    if note is None:
+        raise Rejected("gone", "This note was deleted")
+    state, first_text = note
+    doc = Doc(client_id=0)
+    text = doc.get("text", type=Text)
+    try:
+        if state is None:
+            text += first_text or ""
+        else:
+            doc.apply_update(b64decode(state))
+        doc.apply_update(update)
+    except ValueError as err:
+        raise Rejected("invalid", "Not a change to a note's text") from err
+    state = b64encode(doc.get_update()).decode()
+    update_node(db, board_id, node_id, {"ytext": state, "text": str(text)})
 
 
 def delete_node(db: psycopg.Connection, board_id: int, node_id: str) -> None:
@@ -115,6 +143,8 @@ def answer_change(
                     update_node(db, board_id, node_id, changes)
                 case DeleteNode(id=node_id):
                     delete_node(db, board_id, node_id)
+                case EditText(id=node_id, update=update):
+                    edit_text(db, board_id, node_id, update)
             members = db.execute(
                 "SELECT user_id FROM board_members WHERE board_id = %s", (board_id,)
             ).fetchall()
@@ -123,7 +153,7 @@ def answer_change(
         return Answer(reply={"type": "error", "code": err.code, "detail": err.detail})
     return Answer(
         reply={"type": "ack"},
-        change=change.model_dump(),
+        change=change.model_dump(mode="json"),
         members=frozenset(member for (member,) in members),
     )
 

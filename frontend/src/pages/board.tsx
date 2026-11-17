@@ -93,6 +93,7 @@ function BoardPage() {
                     onLiveUpdate={socket.liveUpdate}
                     onSelect={socket.select}
                     onDelete={socket.remove}
+                    onEditText={socket.editText}
                     uploadImage={uploadImage}
                 />
             )}

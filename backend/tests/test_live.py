@@ -1,7 +1,23 @@
+from base64 import b64encode
+
 import pytest
+from pycrdt import Doc, Text
 
 NOTE = {"id": "note-1", "type": "rectangle", "x": 10, "y": 20}
 OTHER_NOTE = {"id": "note-2", "type": "circle", "radius": 5}
+TEXT_NOTE = {"id": "note-3", "type": "text", "text": "note"}
+
+
+# What a browser sends when its user types into a note that says first_text: a Yjs
+# update on top of the state every client builds from the note's first text.
+def typed(first_text, index, added_text):
+    first = Doc(client_id=0)
+    first.get("text", type=Text).insert(0, first_text)
+    doc = Doc()
+    doc.apply_update(first.get_update())
+    before = doc.get_state()
+    doc.get("text", type=Text).insert(index, added_text)
+    return b64encode(doc.get_update(before)).decode()
 
 
 def added(node):
@@ -146,3 +162,55 @@ def test_invalid_live_updates_are_rejected(auth_headers, open_board, board_id):
     with open_board(board_id, auth_headers) as board:
         reply = board.send({"type": "live_update", "id": NOTE["id"]})
         assert reply["code"] == "invalid"
+
+
+def test_text_typed_at_the_same_time_merges(auth_headers, open_board, board_id):
+    with (
+        open_board(board_id, auth_headers) as mine,
+        open_board(board_id, auth_headers) as theirs,
+    ):
+        mine.add(TEXT_NOTE)
+        # each typed without having seen the other's edit
+        my_edit = typed("note", 0, "my ")
+        their_edit = typed("note", 4, " theirs")
+        assert mine.edit_text(TEXT_NOTE["id"], my_edit) == {"type": "ack"}
+        assert theirs.edit_text(TEXT_NOTE["id"], their_edit) == {"type": "ack"}
+
+        assert theirs.next_change() == added(TEXT_NOTE)
+        assert theirs.next_change() == {
+            "type": "edit_text",
+            "id": TEXT_NOTE["id"],
+            "update": my_edit,
+        }
+    with open_board(board_id, auth_headers) as board:
+        (note,) = board.nodes
+        assert note["text"] == "my note theirs"
+
+
+def test_a_text_edit_sent_twice_is_applied_once(auth_headers, open_board, board_id):
+    with open_board(board_id, auth_headers) as board:
+        board.add(TEXT_NOTE)
+        edit = typed("note", 4, "s")
+        board.edit_text(TEXT_NOTE["id"], edit)
+        board.edit_text(TEXT_NOTE["id"], edit)
+    with open_board(board_id, auth_headers) as board:
+        assert board.nodes[0]["text"] == "notes"
+
+
+def test_text_edits_need_a_text_note(auth_headers, open_board, board_id):
+    with open_board(board_id, auth_headers) as board:
+        board.add(NOTE)
+        for node_id in (NOTE["id"], "no-such-note"):
+            reply = board.edit_text(node_id, typed("", 0, "hello"))
+            assert reply["code"] == "gone"
+    with open_board(board_id, auth_headers) as board:
+        assert board.nodes == [NOTE]
+
+
+@pytest.mark.parametrize("update", ["not base64!", b64encode(b"not yjs").decode()])
+def test_invalid_text_edits_are_rejected(auth_headers, open_board, board_id, update):
+    with open_board(board_id, auth_headers) as board:
+        board.add(TEXT_NOTE)
+        assert board.edit_text(TEXT_NOTE["id"], update)["code"] == "invalid"
+    with open_board(board_id, auth_headers) as board:
+        assert board.nodes == [TEXT_NOTE]

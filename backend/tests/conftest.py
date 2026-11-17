@@ -38,6 +38,9 @@ class BoardSocket:
     def delete(self, node_id):
         return self.send({"type": "delete_node", "id": node_id})
 
+    def edit_text(self, node_id, update):
+        return self.send({"type": "edit_text", "id": node_id, "update": update})
+
     # Live updates and selections get no answer.
     def live(self, node_id, changes):
         self.socket.send_json(

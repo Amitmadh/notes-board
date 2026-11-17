@@ -1,6 +1,7 @@
 from typing import Annotated, Any, Literal
 
 from pydantic import (
+    Base64Bytes,
     BaseModel,
     ConfigDict,
     Field,
@@ -80,7 +81,13 @@ class DeleteNode(BaseModel):
     id: str
 
 
-NodeChange = AddNode | UpdateNode | DeleteNode
+class EditText(BaseModel):
+    type: Literal["edit_text"]
+    id: str
+    update: Base64Bytes
+
+
+NodeChange = AddNode | UpdateNode | DeleteNode | EditText
 
 
 class LiveUpdate(BaseModel):

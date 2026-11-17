@@ -1,4 +1,5 @@
 import type { McNodeJSON } from "microcanvas";
+import { joinUpdates } from "./noteText";
 
 type Changes = Record<string, unknown>;
 
@@ -7,7 +8,8 @@ type Changes = Record<string, unknown>;
 export type Change =
     { type: "add_node"; node: McNodeJSON } |
     { type: "update_node"; id: string; changes: Changes } |
-    { type: "delete_node"; id: string };
+    { type: "delete_node"; id: string } |
+    { type: "edit_text"; id: string; update: string };
 
 // another user's selected note
 export interface PeerSelection {
@@ -100,6 +102,10 @@ export class BoardSocket {
         this.push({ type: "delete_node", id });
     };
 
+    editText = (id: string, update: string) => {
+        this.push({ type: "edit_text", id, update });
+    };
+
     // Closes now, or once sendNext has saved the pending changes
     close = () => {
         this.closing = true;
@@ -111,6 +117,8 @@ export class BoardSocket {
         const last = this.waiting.at(-1);
         if (change.type === "update_node" && last?.type === "update_node" && last.id === change.id) {
             Object.assign(last.changes, change.changes);
+        } else if (change.type === "edit_text" && last?.type === "edit_text" && last.id === change.id) {
+            last.update = joinUpdates(last.update, change.update);
         } else {
             this.waiting.push(change);
         }
@@ -156,6 +164,7 @@ export class BoardSocket {
                 break;
             case "add_node":
             case "delete_node":
+            case "edit_text":
                 this.callbacks.onRemoteChange(message);
                 break;
             case "update_node": {
@@ -181,7 +190,7 @@ export class BoardSocket {
             case "error": {
                 const change = this.sent;
                 this.sent = null;
-                if (change?.type === "update_node" && message.code === "gone") {
+                if ((change?.type === "update_node" || change?.type === "edit_text") && message.code === "gone") {
                     this.callbacks.onGone(change.id);
                 // "exists" means an add resent after a dropped connection was already saved
                 } else if (!(change?.type === "add_node" && message.code === "exists")) {
