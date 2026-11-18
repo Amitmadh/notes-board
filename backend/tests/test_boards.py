@@ -240,3 +240,10 @@ def test_the_first_message_must_sign_in(client, auth_headers):
         socket.send_json({"type": "add_node", "node": NOTE})
         assert closed_with(socket) == BAD_REQUEST
     assert saved_notes(client, board_id, auth_headers) == []
+
+
+def test_a_socket_must_sign_in_in_time(client, auth_headers, monkeypatch):
+    monkeypatch.setattr("notes_board.routers.nodes.SIGN_IN_TIMEOUT_SECONDS", 0.1)
+    board_id = new_board_id(client, auth_headers)
+    with client.websocket_connect(f"/api/boards/{board_id}/ws") as socket:
+        assert closed_with(socket) == BAD_REQUEST

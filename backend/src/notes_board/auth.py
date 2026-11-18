@@ -7,10 +7,12 @@ import jwt
 # FastAPI reads dependency type hints at runtime, so this can't be a type-only import.
 import psycopg  # noqa: TC002
 from dotenv import load_dotenv
-from fastapi import Depends, HTTPException, Response, status
+from fastapi import Depends, HTTPException, Request, Response, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
 from psycopg.rows import class_row
+from psycopg_pool import ConnectionPool  # noqa: TC002
 from pwdlib import PasswordHash
 
 from notes_board.config import ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
@@ -83,15 +85,20 @@ async def get_current_active_user(
     return current_user
 
 
-def authenticate_user(db: psycopg.Connection, username: str, password: str):
-    user = get_user(db, username)
-    if not user:
-        # Takes as long as a real check, so timing doesn't reveal which usernames exist.
-        verify_password(password, DUMMY_HASH)
-        return False
-    if not verify_password(password, user.hashed_password):
-        return False
-    return user
+def find_user(pool: ConnectionPool, username: str) -> UserInDB | None:
+    with pool.connection() as db:
+        return get_user(db, username)
+
+
+async def authenticate_user(
+    request: Request, username: str, password: str
+) -> UserInDB | None:
+    user = await run_in_threadpool(find_user, request.app.state.pool, username)
+    # Takes as long as a real check, so timing doesn't reveal which usernames exist.
+    hashed_password = user.hashed_password if user else DUMMY_HASH
+    async with request.app.state.hashing:
+        matches = await run_in_threadpool(verify_password, password, hashed_password)
+    return user if matches else None
 
 
 def create_token(

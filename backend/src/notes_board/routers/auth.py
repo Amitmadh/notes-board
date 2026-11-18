@@ -2,9 +2,11 @@ from typing import Annotated
 
 # FastAPI reads dependency type hints at runtime, so these can't be type-only imports.
 import psycopg  # noqa: TC002
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.security import OAuth2PasswordRequestForm  # noqa: TC002
 from psycopg.rows import class_row
+from psycopg_pool import ConnectionPool  # noqa: TC002
 
 from notes_board.auth import (
     REFRESH_COOKIE_PATH,
@@ -21,12 +23,14 @@ router = APIRouter(prefix="/api", tags=["auth"])
 
 
 @router.post("/login")
-def login_for_access_token(
+async def login_for_access_token(
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-    db: Annotated[psycopg.Connection, Depends(get_db)],
     response: Response,
 ) -> Token:
-    user = authenticate_user(db, form_data.username, form_data.password)
+    user = await authenticate_user(
+        request, form_data.username.strip(), form_data.password
+    )
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -70,23 +74,24 @@ async def read_users_me(
     return current_user
 
 
-@router.post("/register", status_code=201)
-def register(
-    db: Annotated[psycopg.Connection, Depends(get_db)],
-    body: UserCreate,
-) -> User:
-    if db.execute(
-        "SELECT 1 FROM users WHERE username = %s", (body.username,)
-    ).fetchone():
-        raise HTTPException(status_code=409, detail="Username already exists")
-
-    hashed_password = password_hash.hash(body.password.get_secret_value())
-    with db.cursor(row_factory=class_row(User)) as cur:
+def add_user(pool: ConnectionPool, body: UserCreate, hashed_password: str) -> User:
+    with pool.connection() as db, db.cursor(row_factory=class_row(User)) as cur:
         user = cur.execute(
             "INSERT INTO users (username, full_name, hashed_password)"
-            " VALUES (%s, %s, %s) RETURNING *",
+            " VALUES (%s, %s, %s) ON CONFLICT DO NOTHING RETURNING *",
             (body.username, body.full_name, hashed_password),
         ).fetchone()
-    assert user is not None
-    db.commit()
+    if user is None:
+        raise HTTPException(status_code=409, detail="Username already exists")
     return user
+
+
+@router.post("/register", status_code=201)
+async def register(request: Request, body: UserCreate) -> User:
+    async with request.app.state.hashing:
+        hashed_password = await run_in_threadpool(
+            password_hash.hash, body.password.get_secret_value()
+        )
+    return await run_in_threadpool(
+        add_user, request.app.state.pool, body, hashed_password
+    )

@@ -1,6 +1,13 @@
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from fastapi import WebSocketDisconnect
 
+from notes_board.auth import verify_password
+from notes_board.config import PASSWORDS_HASHED_AT_ONCE
 from notes_board.db import get_connection
 from notes_board.routers.nodes import UNAUTHORIZED
 
@@ -17,9 +24,59 @@ def test_register_returns_the_user_without_the_password(register):
 def test_register_rejects_a_taken_username(client, register):
     name = register().json()["username"]
     response = client.post(
-        "/api/register", json={"username": name, "password": "another"}
+        "/api/register", json={"username": name, "password": "another-password"}
     )
     assert response.status_code == 409
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"username": "ab"},
+        {"username": "  ab  "},
+        {"username": "a" * 33},
+        {"password": "1234567"},
+        {"full_name": "a" * 101},
+    ],
+)
+def test_register_refuses_names_and_passwords_out_of_range(register, fields):
+    assert register(**fields).status_code == 422
+
+
+def test_a_username_is_saved_trimmed(client, register):
+    name = f"test_{uuid.uuid4().hex[:8]}"
+    response = register(username=f"  {name} ", password="right-password")
+    assert response.json()["username"] == name
+    # signing in trims it too
+    response = client.post(
+        "/api/login", data={"username": f" {name}  ", "password": "right-password"}
+    )
+    assert response.status_code == 200
+
+
+def test_only_a_few_passwords_are_hashed_at_once(client, register, monkeypatch):
+    name = register(password="right-password").json()["username"]
+    hashing = most = 0
+    lock = threading.Lock()
+
+    def slow_verify(password, hashed_password):
+        nonlocal hashing, most
+        with lock:
+            hashing += 1
+            most = max(most, hashing)
+        time.sleep(0.05)
+        with lock:
+            hashing -= 1
+        return verify_password(password, hashed_password)
+
+    monkeypatch.setattr("notes_board.auth.verify_password", slow_verify)
+    form = {"username": name, "password": "right-password"}
+    with ThreadPoolExecutor(8) as threads:
+        responses = threads.map(
+            lambda _: client.post("/api/login", data=form), range(8)
+        )
+        assert [response.status_code for response in responses] == [200] * 8
+    assert most == PASSWORDS_HASHED_AT_ONCE
 
 
 def test_login_sets_a_secure_refresh_cookie(client, register):

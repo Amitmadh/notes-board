@@ -1,3 +1,4 @@
+import asyncio
 from base64 import b64decode, b64encode
 from contextlib import suppress
 from typing import Any
@@ -18,7 +19,7 @@ from pydantic import ValidationError
 
 from notes_board.access import find_board_access
 from notes_board.auth import user_from_token
-from notes_board.config import MAX_NODES, MAX_NOTE_TEXT
+from notes_board.config import MAX_NODES, MAX_NOTE_TEXT, SIGN_IN_TIMEOUT_SECONDS
 from notes_board.rooms import Peer, Room, room_for
 from notes_board.schemas import (
     AddNode,
@@ -75,7 +76,7 @@ def add_node(db: psycopg.Connection, board_id: int, node: Node) -> None:
     ).fetchone()
     assert nodes is not None
     if nodes[0] > MAX_NODES:
-        raise Rejected("full", f"A board holds up to {MAX_NODES} items")
+        raise Rejected("full", f"A board holds up to {MAX_NODES} nodes")
 
 
 def set_fields(
@@ -97,7 +98,7 @@ def update_node(
         (board_id, node_id),
     ).fetchone()
     if node is None:
-        raise Rejected("gone", "This item was deleted")
+        raise Rejected("gone", "This node was deleted")
     ValidNode.validate_python({**node[0], **changes})
     set_fields(db, board_id, node_id, changes)
 
@@ -225,7 +226,14 @@ async def board_socket(websocket: WebSocket, board_id: int) -> None:
     pool: ConnectionPool = websocket.app.state.pool
     await websocket.accept()
     try:
-        message = await websocket.receive_text()
+        try:
+            message = await asyncio.wait_for(
+                websocket.receive_text(), SIGN_IN_TIMEOUT_SECONDS
+            )
+        except TimeoutError as err:
+            raise WebSocketException(
+                BAD_REQUEST, f"Sign in within {SIGN_IN_TIMEOUT_SECONDS} seconds"
+            ) from err
         user = await run_in_threadpool(sign_in, pool, board_id, message)
         peer = Peer(user.id, user.username)
         async with room_for(board_id, websocket, peer) as room:

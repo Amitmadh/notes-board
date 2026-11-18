@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from notes_board.app import app
 from notes_board.db import get_connection
 
-PASSWORD = "pw12345"
+PASSWORD = "test-password"
 
 
 # A signed-in board socket, with the notes and selections it got on signing in.
@@ -66,8 +66,8 @@ def register(client):
 
     def register(**fields):
         name = f"test_{uuid.uuid4().hex[:8]}"
-        names.append(name)
         body = {"username": name, "password": PASSWORD, **fields}
+        names.append(body["username"].strip())
         return client.post("/api/register", json=body)
 
     yield register

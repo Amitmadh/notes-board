@@ -1,9 +1,11 @@
+import asyncio
 import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from notes_board.cleanup import clean_up_hourly
+from notes_board.config import PASSWORDS_HASHED_AT_ONCE
 from notes_board.db import create_pool
 from notes_board.models import create_tables
 from notes_board.routers import auth, boards, images, members, nodes
@@ -15,6 +17,7 @@ async def lifespan(app: FastAPI):
         with pool.connection() as conn:
             create_tables(conn)
         app.state.pool = pool
+        app.state.hashing = asyncio.Semaphore(PASSWORDS_HASHED_AT_ONCE)
         stop = threading.Event()
         cleanup = threading.Thread(
             target=clean_up_hourly, args=(pool, stop), daemon=True

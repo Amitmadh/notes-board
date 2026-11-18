@@ -35,6 +35,10 @@ function EntryPage() {
         setError(null);
     };
 
+    // A new account follows the server's rules, which the browser checks first
+    // so it can point at the field to fix
+    const registering = mode === "register";
+
     return (
         <main className="entry">
             <h1>Notes Board</h1>
@@ -46,6 +50,8 @@ function EntryPage() {
                         value={username}
                         onChange={(event) => setUsername(event.target.value)}
                         autoComplete="username"
+                        minLength={registering ? 3 : undefined}
+                        maxLength={registering ? 32 : undefined}
                         required
                     />
                 </label>
@@ -65,6 +71,7 @@ function EntryPage() {
                         value={password}
                         onChange={(event) => setPassword(event.target.value)}
                         autoComplete={mode === "login" ? "current-password" : "new-password"}
+                        minLength={registering ? 8 : undefined}
                         required
                     />
                 </label>

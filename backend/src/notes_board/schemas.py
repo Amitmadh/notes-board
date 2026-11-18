@@ -11,7 +11,12 @@ from pydantic import (
     TypeAdapter,
 )
 
-from notes_board.config import MAX_NOTE_TEXT
+from notes_board.config import (
+    MAX_NOTE_TEXT,
+    MAX_USERNAME_LENGTH,
+    MIN_PASSWORD_LENGTH,
+    MIN_USERNAME_LENGTH,
+)
 
 
 class Token(BaseModel):
@@ -26,9 +31,16 @@ class User(BaseModel):
 
 
 class UserCreate(BaseModel):
-    username: str
-    full_name: str | None = None
-    password: SecretStr
+    username: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            min_length=MIN_USERNAME_LENGTH,
+            max_length=MAX_USERNAME_LENGTH,
+        ),
+    ]
+    full_name: Annotated[str, StringConstraints(max_length=100)] | None = None
+    password: Annotated[SecretStr, Field(min_length=MIN_PASSWORD_LENGTH)]
 
 
 class UserInDB(User):
