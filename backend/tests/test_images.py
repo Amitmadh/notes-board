@@ -126,6 +126,16 @@ def test_cleanup_keeps_images_on_their_board(
     assert client.get(url).status_code == 200
 
 
+def test_a_board_holds_a_limited_size_of_images(
+    client, auth_headers, board_id, monkeypatch
+):
+    monkeypatch.setattr(
+        "notes_board.routers.images.MAX_BOARD_IMAGE_BYTES", 2 * len(PNG)
+    )
+    for status in (201, 201, 413):
+        assert upload(client, board_id, PNG, auth_headers).status_code == status
+
+
 def test_cleanup_keeps_new_images(client, auth_headers, board_id):
     # Uploaded, but the board isn't saved with it yet.
     url = upload(client, board_id, PNG, auth_headers).json()["url"]

@@ -45,6 +45,7 @@ interface BoardSocketCallbacks {
 
 const UNAUTHORIZED = 4401;
 const NO_ACCESS = 4404;
+const TOO_LARGE = 1009;
 
 const RETRY_DELAY_MS = 2000;
 const LIVE_INTERVAL_MS = 50;
@@ -258,7 +259,11 @@ export class BoardSocket {
         this.socket = null;
         this.ready = false;
         if (this.sent) {
-            this.waiting.unshift(this.sent);
+            if (code === TOO_LARGE) {
+                this.callbacks.onError("Couldn't save a change (too large). Reload the page.");
+            } else {
+                this.waiting.unshift(this.sent);
+            }
             this.sent = null;
         }
         if (code === NO_ACCESS) {
@@ -266,6 +271,8 @@ export class BoardSocket {
             this.callbacks.onNoAccess();
         } else if (code === UNAUTHORIZED && !renewedToken) {
             void this.connect(true);
+        } else if (code === TOO_LARGE) {
+            void this.connect(false);
         } else {
             this.retryLater();
         }

@@ -5,7 +5,7 @@ import psycopg  # noqa: TC002
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 
 from notes_board.access import get_accessible_board
-from notes_board.config import MAX_IMAGE_BYTES
+from notes_board.config import MAX_BOARD_IMAGE_BYTES, MAX_IMAGE_BYTES
 from notes_board.db import get_db
 from notes_board.schemas import BoardAccess, Image
 
@@ -38,6 +38,18 @@ def upload_image(
     if content_type is None:
         raise HTTPException(
             status_code=415, detail="Only PNG, JPEG and GIF images are supported"
+        )
+    db.execute("SELECT 1 FROM boards WHERE id = %s FOR NO KEY UPDATE", (board.id,))
+    used = db.execute(
+        "SELECT coalesce(sum(octet_length(data)), 0) FROM images WHERE board_id = %s",
+        (board.id,),
+    ).fetchone()
+    assert used is not None
+    if used[0] + len(data) > MAX_BOARD_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="A board holds up to "
+            f"{MAX_BOARD_IMAGE_BYTES // (1024 * 1024)} MB of images",
         )
     row = db.execute(
         "INSERT INTO images (board_id, content_type, data) VALUES (%s, %s, %s)"
