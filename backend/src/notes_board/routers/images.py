@@ -5,12 +5,11 @@ import psycopg  # noqa: TC002
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 
 from notes_board.access import get_accessible_board
+from notes_board.config import MAX_IMAGE_BYTES
 from notes_board.db import get_db
 from notes_board.schemas import BoardAccess, Image
 
 router = APIRouter(prefix="/api", tags=["images"])
-
-MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 
 def image_type(data: bytes) -> str | None:
@@ -31,7 +30,10 @@ def upload_image(
 ) -> Image:
     data = file.file.read(MAX_IMAGE_BYTES + 1)
     if len(data) > MAX_IMAGE_BYTES:
-        raise HTTPException(status_code=413, detail="Images can be at most 10 MB")
+        raise HTTPException(
+            status_code=413,
+            detail=f"Images can be at most {MAX_IMAGE_BYTES // (1024 * 1024)} MB",
+        )
     content_type = image_type(data)
     if content_type is None:
         raise HTTPException(

@@ -1,16 +1,12 @@
-import datetime
 import logging
 import threading  # noqa: TC003
 
 import psycopg  # noqa: TC002
 from psycopg_pool import ConnectionPool  # noqa: TC002
 
-logger = logging.getLogger(__name__)
+from notes_board.config import IMAGE_CLEANUP_INTERVAL_SECONDS, IMAGE_GRACE_PERIOD
 
-# A board is saved only after a new image is placed on it, so images this new
-# are kept even when their board doesn't show them yet.
-GRACE_PERIOD = datetime.timedelta(days=1)
-INTERVAL_SECONDS = 60 * 60
+logger = logging.getLogger(__name__)
 
 
 def delete_leftover_images(conn: psycopg.Connection) -> int:
@@ -24,14 +20,14 @@ def delete_leftover_images(conn: psycopg.Connection) -> int:
             AND strpos(board_nodes.data::text, images.id::text) > 0
         )
         """,
-        (GRACE_PERIOD,),
+        (IMAGE_GRACE_PERIOD,),
     )
     conn.commit()
     return cur.rowcount
 
 
 def clean_up_hourly(pool: ConnectionPool, stop: threading.Event) -> None:
-    while not stop.wait(INTERVAL_SECONDS):
+    while not stop.wait(IMAGE_CLEANUP_INTERVAL_SECONDS):
         try:
             with pool.connection() as conn:
                 delete_leftover_images(conn)

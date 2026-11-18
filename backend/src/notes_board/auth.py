@@ -13,14 +13,13 @@ from jwt.exceptions import InvalidTokenError
 from psycopg.rows import class_row
 from pwdlib import PasswordHash
 
+from notes_board.config import ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
 from notes_board.db import get_db
 from notes_board.schemas import Token, UserInDB
 
 load_dotenv()
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 15
-REFRESH_TOKEN_EXPIRE_DAYS = 30
 REFRESH_COOKIE_PATH = "/api/refresh"
 SECRET_KEY = os.environ["SECRET_KEY"]
 
