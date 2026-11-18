@@ -31,7 +31,10 @@ FROM python:3.14-slim
 COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
+WORKDIR /app
+COPY main.py ./
+
 EXPOSE 8000
 
 # Run the application
-CMD ["uvicorn", "notes_board.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "main.py"]
