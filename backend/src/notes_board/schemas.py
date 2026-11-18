@@ -5,10 +5,13 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    FiniteFloat,
     SecretStr,
     StringConstraints,
     TypeAdapter,
 )
+
+from notes_board.config import MAX_NOTE_TEXT
 
 
 class Token(BaseModel):
@@ -52,11 +55,87 @@ class BoardAccess(BaseModel):
     role: Literal["owner", "editor"]
 
 
-class Node(BaseModel):
-    model_config = ConfigDict(extra="allow")
+ShortStr = Annotated[str, StringConstraints(max_length=100)]
 
-    id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-    type: str
+
+class Node(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    id: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
+    ]
+    x: FiniteFloat = 0
+    y: FiniteFloat = 0
+    rotation: FiniteFloat = 0
+    scaleX: FiniteFloat = 1
+    scaleY: FiniteFloat = 1
+    opacity: FiniteFloat = 1
+    visible: bool = True
+    layer: FiniteFloat = 0
+    selectable: bool = False
+    draggable: bool = False
+    resizable: bool = False
+
+
+class ShapeNode(Node):
+    fill: ShortStr | None = "black"
+    stroke: ShortStr | None = None
+    strokeWidth: FiniteFloat = 1
+
+
+class BoxNode(ShapeNode):
+    type: Literal[
+        "rectangle", "triangle", "diamond", "hexagon", "star", "arrow", "cursor"
+    ]
+    width: FiniteFloat
+    height: FiniteFloat
+
+
+class CircleNode(ShapeNode):
+    type: Literal["circle"]
+    radius: FiniteFloat
+
+
+class TextNode(Node):
+    type: Literal["text"]
+    text: Annotated[str, StringConstraints(max_length=MAX_NOTE_TEXT)]
+    width: FiniteFloat | None = None
+    fontSize: FiniteFloat = 14
+    fontFamily: ShortStr = "sans-serif"
+    fontWeight: ShortStr | FiniteFloat = "normal"
+    fontStyle: Literal["normal", "italic"] = "normal"
+    fill: ShortStr = "black"
+    stroke: ShortStr | None = None
+    strokeWidth: FiniteFloat = 1
+    lineHeight: FiniteFloat = 1
+    align: Literal["left", "center", "right"] = "left"
+    baseline: Literal[
+        "alphabetic", "bottom", "hanging", "ideographic", "middle", "top"
+    ] = "alphabetic"
+    direction: Literal["ltr", "rtl"] = "ltr"
+    padding: FiniteFloat = 0
+    background: ShortStr | None = None
+    cornerRadius: FiniteFloat = 0
+    writable: bool = False
+
+
+class ImageNode(Node):
+    type: Literal["image"]
+    # the url of an image uploaded to the board
+    src: Annotated[
+        str,
+        StringConstraints(
+            pattern=r"^/api/images/[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"
+        ),
+    ]
+    width: FiniteFloat
+    height: FiniteFloat
+
+
+AnyNode = Annotated[
+    BoxNode | CircleNode | TextNode | ImageNode, Field(discriminator="type")
+]
+ValidNode = TypeAdapter(AnyNode)
 
 
 # The first message on a board's socket.
@@ -67,7 +146,7 @@ class SocketAuth(BaseModel):
 
 class AddNode(BaseModel):
     type: Literal["add_node"]
-    node: Node
+    node: AnyNode
 
 
 class UpdateNode(BaseModel):

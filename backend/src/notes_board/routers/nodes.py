@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from notes_board.access import find_board_access
 from notes_board.auth import user_from_token
+from notes_board.config import MAX_NODES, MAX_NOTE_TEXT
 from notes_board.rooms import Peer, Room, room_for
 from notes_board.schemas import (
     AddNode,
@@ -25,6 +26,7 @@ from notes_board.schemas import (
     ClientMessage,
     DeleteNode,
     EditText,
+    ImageNode,
     LiveUpdate,
     Node,
     NodeChange,
@@ -32,6 +34,7 @@ from notes_board.schemas import (
     SocketAuth,
     UpdateNode,
     UserInDB,
+    ValidNode,
 )
 
 router = APIRouter(prefix="/api", tags=["nodes"])
@@ -40,6 +43,9 @@ router = APIRouter(prefix="/api", tags=["nodes"])
 UNAUTHORIZED = 4401
 NO_ACCESS = 4404
 BAD_REQUEST = 4400
+
+# what an update can't change
+FIXED_FIELDS = {"id", "type", "src", "text"}
 
 
 class Rejected(Exception):
@@ -50,26 +56,50 @@ class Rejected(Exception):
 
 
 def add_node(db: psycopg.Connection, board_id: int, node: Node) -> None:
+    if isinstance(node, ImageNode):
+        image = db.execute(
+            "SELECT 1 FROM images WHERE id = %s AND board_id = %s",
+            (node.src.removeprefix("/api/images/"), board_id),
+        ).fetchone()
+        if image is None:
+            raise Rejected("invalid", "The image isn't one of this board's")
     inserted = db.execute(
         "INSERT INTO board_nodes (board_id, node_id, data) VALUES (%s, %s, %s)"
         " ON CONFLICT DO NOTHING",
-        (board_id, node.id, Jsonb(node.model_dump())),
+        (board_id, node.id, Jsonb(node.model_dump(exclude_unset=True))),
     ).rowcount
     if inserted == 0:
         raise Rejected("exists", "A note with this id already exists")
+    nodes = db.execute(
+        "SELECT count(*) FROM board_nodes WHERE board_id = %s", (board_id,)
+    ).fetchone()
+    assert nodes is not None
+    if nodes[0] > MAX_NODES:
+        raise Rejected("full", f"A board holds up to {MAX_NODES} items")
+
+
+def set_fields(
+    db: psycopg.Connection, board_id: int, node_id: str, fields: dict[str, Any]
+) -> None:
+    db.execute(
+        "UPDATE board_nodes SET data = data || %s WHERE board_id = %s AND node_id = %s",
+        (Jsonb(fields), board_id, node_id),
+    )
 
 
 def update_node(
     db: psycopg.Connection, board_id: int, node_id: str, changes: dict[str, Any]
 ) -> None:
-    if "id" in changes:
-        raise Rejected("invalid", "A note's id can't change")
-    updated = db.execute(
-        "UPDATE board_nodes SET data = data || %s WHERE board_id = %s AND node_id = %s",
-        (Jsonb(changes), board_id, node_id),
-    ).rowcount
-    if updated == 0:
-        raise Rejected("gone", "This note was deleted")
+    if fixed := FIXED_FIELDS & changes.keys():
+        raise Rejected("invalid", f"An update can't change {', '.join(sorted(fixed))}")
+    node = db.execute(
+        "SELECT data - 'ytext' FROM board_nodes WHERE board_id = %s AND node_id = %s",
+        (board_id, node_id),
+    ).fetchone()
+    if node is None:
+        raise Rejected("gone", "This item was deleted")
+    ValidNode.validate_python({**node[0], **changes})
+    set_fields(db, board_id, node_id, changes)
 
 
 def edit_text(
@@ -93,8 +123,11 @@ def edit_text(
         doc.apply_update(update)
     except ValueError as err:
         raise Rejected("invalid", "Not a change to a note's text") from err
+    merged = str(text)
+    if len(merged) > MAX_NOTE_TEXT:
+        raise Rejected("full", f"A note holds up to {MAX_NOTE_TEXT} characters")
     state = b64encode(doc.get_update()).decode()
-    update_node(db, board_id, node_id, {"ytext": state, "text": str(text)})
+    set_fields(db, board_id, node_id, {"ytext": state, "text": merged})
 
 
 def delete_node(db: psycopg.Connection, board_id: int, node_id: str) -> None:
@@ -151,9 +184,11 @@ def answer_change(
             db.commit()
     except Rejected as err:
         return Answer(reply={"type": "error", "code": err.code, "detail": err.detail})
+    except ValidationError as err:
+        return Answer(reply=invalid_reply(err))
     return Answer(
         reply={"type": "ack"},
-        change=change.model_dump(mode="json"),
+        change=change.model_dump(mode="json", exclude_unset=True),
         members=frozenset(member for (member,) in members),
     )
 

@@ -48,7 +48,14 @@ def new_board_id(client, headers):
     return response.json()["id"]
 
 
-NOTE = {"id": "note-1", "type": "rectangle", "x": 10, "y": 20}
+NOTE = {
+    "id": "note-1",
+    "type": "rectangle",
+    "x": 10,
+    "y": 20,
+    "width": 30,
+    "height": 40,
+}
 ACK = {"type": "ack"}
 
 
@@ -86,6 +93,41 @@ def test_note_needs_an_id_and_type(client, auth_headers, open_board, note):
         assert board.add(note)["code"] == "invalid"
 
 
+@pytest.mark.parametrize(
+    "note",
+    [
+        {**NOTE, "type": "blob"},
+        {**NOTE, "width": "30"},
+        {**NOTE, "x": None},
+        {**NOTE, "colour": "red"},
+        {"id": "note-1", "type": "rectangle", "x": 10},
+        {"id": "note-1", "type": "text"},
+        {"id": "note-1", "type": "text", "text": 123},
+        {"id": "note-1", "type": "text", "text": "x" * 10_001},
+        {"id": "note-1", "type": "text", "text": "note", "ytext": "AAA="},
+        {"id": "note-1", "type": "image", "src": "https://example.com/a.png"},
+    ],
+)
+def test_a_malformed_note_is_rejected(client, auth_headers, open_board, note):
+    board_id = new_board_id(client, auth_headers)
+    with open_board(board_id, auth_headers) as board:
+        assert board.add(note)["code"] == "invalid"
+    assert saved_notes(client, board_id, auth_headers) == []
+
+
+def test_a_full_board_takes_no_more_notes(
+    client, auth_headers, open_board, monkeypatch
+):
+    monkeypatch.setattr("notes_board.routers.nodes.MAX_NODES", 1)
+    board_id = new_board_id(client, auth_headers)
+    with open_board(board_id, auth_headers) as board:
+        assert board.add(NOTE) == ACK
+        assert board.add({**NOTE, "id": "note-2"})["code"] == "full"
+        # sent again after a dropped connection, a saved note is still "exists"
+        assert board.add(NOTE)["code"] == "exists"
+    assert saved_notes(client, board_id, auth_headers) == [NOTE]
+
+
 def test_a_rejected_change_leaves_the_socket_open(client, auth_headers, open_board):
     board_id = new_board_id(client, auth_headers)
     with open_board(board_id, auth_headers) as board:
@@ -121,6 +163,26 @@ def test_a_notes_id_cant_change(client, auth_headers, open_board):
     with open_board(board_id, auth_headers) as board:
         board.add(NOTE)
         assert board.update(NOTE["id"], {"id": "note-2"})["code"] == "invalid"
+    assert saved_notes(client, board_id, auth_headers) == [NOTE]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"type": "circle"},
+        {"text": "hello"},
+        {"ytext": "AAA="},
+        {"src": "/api/images/a.png"},
+        {"x": "100"},
+        {"width": None},
+        {"colour": "red"},
+    ],
+)
+def test_an_update_leaves_a_valid_note(client, auth_headers, open_board, changes):
+    board_id = new_board_id(client, auth_headers)
+    with open_board(board_id, auth_headers) as board:
+        board.add(NOTE)
+        assert board.update(NOTE["id"], changes)["code"] == "invalid"
     assert saved_notes(client, board_id, auth_headers) == [NOTE]
 
 

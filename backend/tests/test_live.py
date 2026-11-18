@@ -3,7 +3,14 @@ from base64 import b64encode
 import pytest
 from pycrdt import Doc, Text
 
-NOTE = {"id": "note-1", "type": "rectangle", "x": 10, "y": 20}
+NOTE = {
+    "id": "note-1",
+    "type": "rectangle",
+    "x": 10,
+    "y": 20,
+    "width": 30,
+    "height": 40,
+}
 OTHER_NOTE = {"id": "note-2", "type": "circle", "radius": 5}
 TEXT_NOTE = {"id": "note-3", "type": "text", "text": "note"}
 
@@ -214,3 +221,18 @@ def test_invalid_text_edits_are_rejected(auth_headers, open_board, board_id, upd
         assert board.edit_text(TEXT_NOTE["id"], update)["code"] == "invalid"
     with open_board(board_id, auth_headers) as board:
         assert board.nodes == [TEXT_NOTE]
+
+
+def test_a_note_holds_a_limited_text(auth_headers, open_board, board_id, monkeypatch):
+    monkeypatch.setattr("notes_board.routers.nodes.MAX_NOTE_TEXT", 6)
+    with open_board(board_id, auth_headers) as board:
+        board.add(TEXT_NOTE)
+        assert board.edit_text(TEXT_NOTE["id"], typed("note", 4, "s!")) == {
+            "type": "ack"
+        }
+        # typed by someone who hasn't seen that edit: "a notes!" is too long
+        assert (
+            board.edit_text(TEXT_NOTE["id"], typed("note", 0, "a "))["code"] == "full"
+        )
+    with open_board(board_id, auth_headers) as board:
+        assert board.nodes[0]["text"] == "notes!"

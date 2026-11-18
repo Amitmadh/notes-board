@@ -8,7 +8,14 @@ from fastapi import WebSocketDisconnect
 from notes_board.db import get_connection
 from notes_board.routers.nodes import NO_ACCESS
 
-NOTE = {"id": "note-1", "type": "rectangle", "x": 10, "y": 20}
+NOTE = {
+    "id": "note-1",
+    "type": "rectangle",
+    "x": 10,
+    "y": 20,
+    "width": 30,
+    "height": 40,
+}
 ACK = {"type": "ack"}
 
 

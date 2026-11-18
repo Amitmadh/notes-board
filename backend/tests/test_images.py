@@ -76,7 +76,20 @@ def test_unknown_images_are_not_found(client):
 
 
 def picture(url):
-    return {"id": "picture", "type": "image", "src": url}
+    return {"id": "picture", "type": "image", "src": url, "width": 40, "height": 30}
+
+
+def test_a_picture_shows_an_image_of_its_board(
+    client, open_board, auth_headers, board_id
+):
+    other_board = client.post(
+        "/api/boards", json={"name": "Other"}, headers=auth_headers
+    ).json()["id"]
+    elsewhere = upload(client, other_board, PNG, auth_headers).json()["url"]
+    with open_board(board_id, auth_headers) as board:
+        assert board.add(picture(elsewhere))["code"] == "invalid"
+        assert board.add(picture(f"/api/images/{uuid.uuid4()}"))["code"] == "invalid"
+        assert board.nodes == []
 
 
 # Runs the cleanup as if the image had been uploaded two days ago.
