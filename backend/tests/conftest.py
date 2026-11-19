@@ -1,13 +1,32 @@
+import os
 import uuid
 from contextlib import contextmanager
 
+import psycopg
 import pytest
+from dotenv import load_dotenv
 from fastapi.testclient import TestClient
+from psycopg import sql
 
-from notes_board.app import app
-from notes_board.db import get_connection
+# Tests run on a database of their own, so they never touch the boards you use.
+# DB_NAME changes before the app reads it.
+load_dotenv()
+os.environ["DB_NAME"] += "_test"
+
+from notes_board.app import app  # noqa: E402
+from notes_board.db import CONNINFO, get_connection  # noqa: E402
 
 PASSWORD = "test-password"
+
+
+# Makes the test database afresh for each run. The app adds its tables when it
+# starts.
+@pytest.fixture(scope="session", autouse=True)
+def database():
+    name = sql.Identifier(os.environ["DB_NAME"])
+    with psycopg.connect(CONNINFO, dbname="postgres", autocommit=True) as admin:
+        admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(name))
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(name))
 
 
 # A signed-in board socket, with the notes and selections it got on signing in.
