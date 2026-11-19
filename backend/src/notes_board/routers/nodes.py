@@ -106,9 +106,11 @@ def update_node(
 def edit_text(
     db: psycopg.Connection, board_id: int, node_id: str, update: bytes
 ) -> None:
+    # locked, so two servers merging into one note take turns
     note = db.execute(
         "SELECT data->>'ytext', data->>'text' FROM board_nodes"
-        " WHERE board_id = %s AND node_id = %s AND data->>'type' = 'text'",
+        " WHERE board_id = %s AND node_id = %s AND data->>'type' = 'text'"
+        " FOR NO KEY UPDATE",
         (board_id, node_id),
     ).fetchone()
     if note is None:

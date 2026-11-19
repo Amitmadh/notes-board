@@ -1,6 +1,8 @@
 import psycopg  # noqa: TC002
 
 SCHEMA = """
+SELECT pg_advisory_xact_lock(1);
+
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,

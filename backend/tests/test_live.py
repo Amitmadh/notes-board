@@ -1,7 +1,12 @@
-from base64 import b64encode
+import threading
+import time
+from base64 import b64decode, b64encode
 
 import pytest
 from pycrdt import Doc, Text
+
+from notes_board.db import get_connection
+from notes_board.routers.nodes import edit_text
 
 NOTE = {
     "id": "note-1",
@@ -192,6 +197,27 @@ def test_text_typed_at_the_same_time_merges(auth_headers, open_board, board_id):
     with open_board(board_id, auth_headers) as board:
         (note,) = board.nodes
         assert note["text"] == "my note theirs"
+
+
+# Two servers merge into one note at once, as if both held its board.
+def test_merges_into_one_note_wait_for_each_other(auth_headers, open_board, board_id):
+    with open_board(board_id, auth_headers) as board:
+        board.add(TEXT_NOTE)
+
+    def their_server():
+        with get_connection() as db:
+            update = b64decode(typed("note", 4, " theirs"))
+            edit_text(db, board_id, TEXT_NOTE["id"], update)
+
+    other_server = threading.Thread(target=their_server)
+    with get_connection() as db:
+        update = b64decode(typed("note", 0, "my "))
+        edit_text(db, board_id, TEXT_NOTE["id"], update)
+        other_server.start()
+        time.sleep(0.2)  # their merge starts before mine is saved
+    other_server.join()
+    with open_board(board_id, auth_headers) as board:
+        assert board.nodes[0]["text"] == "my note theirs"
 
 
 def test_a_text_edit_sent_twice_is_applied_once(auth_headers, open_board, board_id):

@@ -14,7 +14,9 @@ services:
       retries: 10
     restart: unless-stopped
 
-  backend:
+  # One backend for now. To add more, see the comment above the upstreams in
+  # frontend/nginx.conf.
+  backend: &backend
     build: ./backend
     environment:
       DB_HOST: db

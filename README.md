@@ -21,3 +21,9 @@ Then open http://localhost:8080. Boards are kept in the `db-data` volume.
 
 The sign-in cookie is `Secure`, which browsers accept over plain HTTP only on
 `localhost`. Anywhere else, put HTTPS in front.
+
+## Scaling
+
+Each board lives in one backend process: nginx hashes the board id, so backends share no
+state. Compose runs one; adding one is a service in `compose.yaml` and its `server` lines
+in `frontend/nginx.conf`, as the comments there explain.
