@@ -6,7 +6,7 @@ import pytest
 from fastapi import WebSocketDisconnect
 
 from notes_board.db import get_connection
-from notes_board.routers.nodes import NO_ACCESS
+from notes_board.routers.nodes import NO_ACCESS, sign_in
 
 NOTE = {
     "id": "note-1",
@@ -134,18 +134,47 @@ def test_removed_members_cant_keep_editing(client, open_board, alice, bob, board
     assert board["nodes"] == [NOTE]
 
 
-# Bob is watching the board when he's removed.
-def test_removed_members_stop_getting_changes(client, open_board, alice, bob, board_id):
+# Bob is removed and Carol leaves while they watch Alice move a note.
+def test_removed_members_stop_getting_updates(
+    client, open_board, new_user, alice, bob, board_id
+):
+    carol = new_user()
     share(client, board_id, alice, bob.name)
+    share(client, board_id, alice, carol.name)
 
     with (
         open_board(board_id, alice.headers) as alices_board,
         open_board(board_id, bob.headers) as bobs_board,
+        open_board(board_id, carol.headers) as carols_board,
     ):
         client.delete(f"{members_url(board_id)}/{bob.name}", headers=alice.headers)
+        client.delete(f"{members_url(board_id)}/{carol.name}", headers=carol.headers)
+        alices_board.live(NOTE["id"], {"x": 50})
+        for board in (bobs_board, carols_board):
+            with pytest.raises(WebSocketDisconnect) as closed:
+                board.next_change()
+            assert closed.value.code == NO_ACCESS
         assert alices_board.add(NOTE) == ACK
-        with pytest.raises(WebSocketDisconnect) as closed:
-            bobs_board.next_change()
+
+
+# Alice removes Bob after his socket's token is checked but before it joins.
+def test_members_removed_while_signing_in_cant_join(
+    client, connect, alice, bob, board_id, monkeypatch
+):
+    share(client, board_id, alice, bob.name)
+
+    def sign_in_then_remove(pool, message):
+        user = sign_in(pool, message)
+        client.delete(f"{members_url(board_id)}/{bob.name}", headers=alice.headers)
+        return user
+
+    monkeypatch.setattr("notes_board.routers.nodes.sign_in", sign_in_then_remove)
+    token = bob.headers["Authorization"].removeprefix("Bearer ")
+    with (
+        connect(board_id, token) as socket,
+        pytest.raises(WebSocketDisconnect) as closed,
+    ):
+        socket.receive_json()
     assert closed.value.code == NO_ACCESS
 
 
@@ -183,6 +212,24 @@ def test_the_owner_can_delete_the_board(client, open_board, alice, bob, board_id
         board = client.get(f"/api/boards/{board_id}", headers=user.headers)
         assert board.status_code == 404
         assert client.get("/api/boards", headers=user.headers).json() == []
+
+
+# Alice deletes the board while Bob moves a note on it.
+def test_deleting_the_board_closes_its_sockets(
+    client, open_board, alice, bob, board_id
+):
+    share(client, board_id, alice, bob.name)
+
+    with (
+        open_board(board_id, alice.headers) as alices_board,
+        open_board(board_id, bob.headers) as bobs_board,
+    ):
+        client.delete(f"/api/boards/{board_id}", headers=alice.headers)
+        bobs_board.live(NOTE["id"], {"x": 50})
+        for board in (alices_board, bobs_board):
+            with pytest.raises(WebSocketDisconnect) as closed:
+                board.next_change()
+            assert closed.value.code == NO_ACCESS
 
 
 def test_only_the_owner_can_delete_the_board(client, new_user, alice, bob, board_id):

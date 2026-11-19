@@ -1,12 +1,13 @@
 from typing import Annotated
 
 import psycopg  # noqa: TC002
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from psycopg.rows import class_row
 
 from notes_board.access import get_accessible_board
 from notes_board.auth import get_current_active_user, get_user
 from notes_board.db import get_db
+from notes_board.routers.nodes import close_sockets
 from notes_board.schemas import BoardAccess, Member, MemberCreate, UserInDB
 
 router = APIRouter(prefix="/api", tags=["members"])
@@ -61,17 +62,20 @@ def remove_member(
     board: Annotated[BoardAccess, Depends(get_accessible_board)],
     current_user: Annotated[UserInDB, Depends(get_current_active_user)],
     db: Annotated[psycopg.Connection, Depends(get_db)],
+    background_tasks: BackgroundTasks,
 ) -> None:
     if board.role != "owner" and username != current_user.username:
         raise HTTPException(status_code=403, detail="Only the owner can remove others")
     if board.role == "owner" and username == current_user.username:
         raise HTTPException(status_code=409, detail="The owner can't leave the board")
-    cur = db.execute(
+    removed = db.execute(
         "DELETE FROM board_members USING users"
         " WHERE board_members.user_id = users.id"
-        " AND board_members.board_id = %s AND users.username = %s",
+        " AND board_members.board_id = %s AND users.username = %s"
+        " RETURNING board_members.user_id",
         (board.id, username),
-    )
-    if cur.rowcount == 0:
+    ).fetchone()
+    if removed is None:
         raise HTTPException(status_code=404, detail="Not a member of this board")
     db.commit()
+    background_tasks.add_task(close_sockets, board.id, removed[0])

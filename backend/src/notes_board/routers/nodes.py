@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from notes_board.access import find_board_access
 from notes_board.auth import user_from_token
 from notes_board.config import MAX_NODES, MAX_NOTE_TEXT, SIGN_IN_TIMEOUT_SECONDS
-from notes_board.rooms import Peer, Room, room_for
+from notes_board.rooms import Peer, Room, room_for, rooms
 from notes_board.schemas import (
     AddNode,
     Answer,
@@ -138,7 +138,7 @@ def delete_node(db: psycopg.Connection, board_id: int, node_id: str) -> None:
     )
 
 
-def sign_in(pool: ConnectionPool, board_id: int, message: str) -> UserInDB:
+def sign_in(pool: ConnectionPool, message: str) -> UserInDB:
     try:
         token = SocketAuth.model_validate_json(message).token
     except ValidationError as err:
@@ -148,15 +148,17 @@ def sign_in(pool: ConnectionPool, board_id: int, message: str) -> UserInDB:
             user = user_from_token(db, token, kind="access")
         except HTTPException as err:
             raise WebSocketException(UNAUTHORIZED, err.detail) from err
-        if user.disabled:
-            raise WebSocketException(UNAUTHORIZED, "Inactive user")
-        if find_board_access(db, board_id, user.id) is None:
-            raise WebSocketException(NO_ACCESS, "Board not found")
+    if user.disabled:
+        raise WebSocketException(UNAUTHORIZED, "Inactive user")
     return user
 
 
-def saved_nodes(pool: ConnectionPool, board_id: int) -> list[dict[str, Any]]:
+def saved_nodes(
+    pool: ConnectionPool, board_id: int, user_id: int
+) -> list[dict[str, Any]]:
     with pool.connection() as db:
+        if find_board_access(db, board_id, user_id) is None:
+            raise WebSocketException(NO_ACCESS, "Board not found")
         rows = db.execute(
             "SELECT data FROM board_nodes WHERE board_id = %s", (board_id,)
         ).fetchall()
@@ -207,6 +209,18 @@ async def close_removed(room: Room, members: frozenset[int]) -> None:
                 await socket.close(NO_ACCESS, "Board not found")
 
 
+async def close_sockets(board_id: int, user_id: int | None = None) -> None:
+    room = rooms.get(board_id)
+    if room is None:
+        return
+    async with room.lock:
+        for socket, peer in list(room.sockets.items()):
+            if user_id is None or peer.user_id == user_id:
+                del room.sockets[socket]
+                with suppress(WebSocketDisconnect):
+                    await socket.close(NO_ACCESS, "Board not found")
+
+
 # send live updates and selections to the others without saveing or answering
 async def relay(
     room: Room, sender: WebSocket, peer: Peer, message: LiveUpdate | SelectNode
@@ -234,12 +248,12 @@ async def board_socket(websocket: WebSocket, board_id: int) -> None:
             raise WebSocketException(
                 BAD_REQUEST, f"Sign in within {SIGN_IN_TIMEOUT_SECONDS} seconds"
             ) from err
-        user = await run_in_threadpool(sign_in, pool, board_id, message)
+        user = await run_in_threadpool(sign_in, pool, message)
         peer = Peer(user.id, user.username)
         async with room_for(board_id, websocket, peer) as room:
             # no change is saved between reading the board and joining the room
             async with room.lock:
-                nodes = await run_in_threadpool(saved_nodes, pool, board_id)
+                nodes = await run_in_threadpool(saved_nodes, pool, board_id, user.id)
                 await websocket.send_json(
                     {"type": "ready", "nodes": nodes, "selections": room.selections()}
                 )

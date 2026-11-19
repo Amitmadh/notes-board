@@ -1,12 +1,13 @@
 from typing import Annotated
 
 import psycopg  # noqa: TC002
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from psycopg.rows import class_row
 
 from notes_board.access import get_accessible_board
 from notes_board.auth import get_current_active_user
 from notes_board.db import get_db
+from notes_board.routers.nodes import close_sockets
 from notes_board.schemas import Board, BoardAccess, BoardCreate, BoardInDB, UserInDB
 
 router = APIRouter(prefix="/api", tags=["boards"])
@@ -74,6 +75,7 @@ def get_board(
 def delete_board(
     access: Annotated[BoardAccess, Depends(get_accessible_board)],
     db: Annotated[psycopg.Connection, Depends(get_db)],
+    background_tasks: BackgroundTasks,
 ) -> None:
     if access.role != "owner":
         raise HTTPException(
@@ -81,3 +83,4 @@ def delete_board(
         )
     db.execute("DELETE FROM boards WHERE id = %s", (access.id,))
     db.commit()
+    background_tasks.add_task(close_sockets, access.id)
