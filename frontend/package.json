@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "microcanvas": "github:Amitmadh/microCanvas#v1.1.2",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
+    "@playwright/test": "^1.63.0",
     "@rolldown/plugin-babel": "^0.2.4",
     "@types/babel__core": "^7.20.5",
     "@types/node": "^24.19.2",
