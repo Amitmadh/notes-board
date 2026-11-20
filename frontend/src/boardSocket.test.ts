@@ -50,9 +50,9 @@ afterEach(() => {
 });
 
 // What the server does with a new socket: takes its token and sends the board.
-function signIn(socket: FakeSocket, nodes: McNodeJSON[] = []) {
+function signIn(socket: FakeSocket, nodes: McNodeJSON[] = [], token = "token") {
     socket.onopen();
-    expect(socket.sent).toEqual([{ type: "auth", token: "token" }]);
+    expect(socket.sent).toEqual([{ type: "auth", token }]);
     socket.receive({ type: "ready", nodes, selections: [] });
     return socket;
 }
@@ -68,7 +68,7 @@ function openBoard(nodes: McNodeJSON[] = []) {
         onNoAccess: vi.fn(),
         onError: vi.fn(),
     };
-    const auth = { accessToken: () => "token", renewAccessToken: async () => "token" };
+    const auth = { accessToken: () => "token", renewAccessToken: async () => "renewed" };
     const board = new BoardSocket(1, auth, callbacks);
     return { board, callbacks, socket: signIn(FakeSocket.last, nodes) };
 }
@@ -123,6 +123,20 @@ test("replays unsaved changes after a reconnect", () => {
     expect(again.changes()).toEqual([{ type: "add_node", node: NOTE }]);
     again.receive({ type: "ack" });
     expect(again.changes().at(-1)).toEqual({ type: "update_node", id: "note", changes: { x: 5 } });
+});
+
+test("signs in again with a renewed token when the server closes with 4401", async () => {
+    const { board, socket, callbacks } = openBoard();
+    board.add(NOTE);
+    // the token ran out, so the server closed the socket
+    socket.drop(4401);
+    await vi.advanceTimersByTimeAsync(0); // lets the renewal finish
+    const again = signIn(FakeSocket.last, [], "renewed");
+    expect(again.changes()).toEqual([{ type: "add_node", node: NOTE }]);
+    expect(callbacks.onError).not.toHaveBeenCalled();
+    // a renewed token that's refused too is tried again later, not renewed in a loop
+    again.drop(4401);
+    expect(callbacks.onError).toHaveBeenLastCalledWith("Connection lost, reconnecting…");
 });
 
 test("ignores exists on an add resent after a reconnect", () => {

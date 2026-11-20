@@ -33,19 +33,30 @@ async function createBoard(request: APIRequestContext, owner: User, members: Use
     return board.id;
 }
 
-async function savedText(request: APIRequestContext, user: User, boardId: number) {
+async function savedNodes(request: APIRequestContext, user: User, boardId: number) {
     const headers = { Authorization: `Bearer ${user.token}` };
     const response = await request.get(`/api/boards/${boardId}`, { headers });
     const { nodes } = await response.json();
+    return nodes;
+}
+
+async function savedText(request: APIRequestContext, user: User, boardId: number) {
+    const nodes = await savedNodes(request, user, boardId);
     return nodes[0]?.text;
 }
 
-async function openBoard(browser: Browser, user: User, boardId: number, latency = LATENCY_MS) {
+async function openBoard(browser: Browser, user: User, boardId: number, latency = LATENCY_MS, online = () => true) {
     const page = await browser.newPage({ viewport: { width: 1100, height: 700 } });
     await page.routeWebSocket(/\/ws$/, (ws) => {
+        if (!online()) return ws.close();
         const server = ws.connectToServer();
-        ws.onMessage((message) => setTimeout(() => server.send(message), latency));
-        server.onMessage((message) => setTimeout(() => ws.send(message), latency));
+        const relay = (send: () => void) => setTimeout(() => {
+            if (online()) return send();
+            void ws.close();
+            void server.close();
+        }, latency);
+        ws.onMessage((message) => relay(() => server.send(message)));
+        server.onMessage((message) => relay(() => ws.send(message)));
     });
     await page.goto("/login");
     await page.getByLabel("Username").fill(user.username);
@@ -62,6 +73,35 @@ async function openBoard(browser: Browser, user: User, boardId: number, latency 
 async function canvasBox(page: Page) {
     const box = (await page.locator(".canvas canvas").boundingBox())!;
     return { ...box, centerX: box.x + box.width / 2, centerY: box.y + box.height / 2 };
+}
+
+// canvas center (where new nodes go) and some points around it
+async function canvasPoints(page: Page) {
+    const { centerX, centerY } = await canvasBox(page);
+    return [[0, 0], [-300, -150], [300, -150], [-300, 150], [300, 150], [0, 180]]
+        .map(([dx, dy]) => ({ x: centerX + dx, y: centerY + dy }));
+}
+
+// Checks that every page shows the board as the server saved it.
+async function expectSavedBoard(browser: Browser, user: User, boardId: number, pages: Page[]) {
+    // deselect and reset the view so the screenshots can be compared
+    for (const page of pages) {
+        const box = await canvasBox(page);
+        await page.keyboard.press("Escape");
+        await page.getByRole("button", { name: "Reset view" }).click();
+        await page.mouse.click(box.x + 5, box.y + 5);
+        await expect(page.getByRole("button", { name: "Delete", exact: true })).toBeDisabled();
+    }
+    await pages[0].waitForTimeout(2000);
+
+    // a new page only has what the server saved
+    const fresh = await openBoard(browser, user, boardId, 0);
+    const expected = await fresh.locator(".canvas canvas").screenshot();
+    await test.info().attach("saved", { body: expected, contentType: "image/png" });
+    for (const [i, page] of pages.entries()) {
+        const canvas = page.locator(".canvas canvas");
+        await expect.poll(async () => (await canvas.screenshot()).equals(expected), `user ${i + 1}`).toBe(true);
+    }
 }
 
 // mulberry32, seeded so a failing run can be replayed
@@ -129,11 +169,7 @@ test("three users making random edits end up with the same board", async ({ brow
     // pages are opened and driven one at a time, firefox loses input sent to several windows at once
     const pages: Page[] = [];
     for (const user of users) pages.push(await openBoard(browser, user, boardId));
-
-    const box = await canvasBox(pages[0]);
-    // canvas center (where new nodes go) and some points around it
-    const points = [[0, 0], [-300, -150], [300, -150], [-300, 150], [300, 150], [0, 180]]
-        .map(([dx, dy]) => ({ x: box.centerX + dx, y: box.centerY + dy }));
+    const points = await canvasPoints(pages[0]);
 
     // users take turns but the latency means their edits still overlap
     const randoms = pages.map((_, i) => random(i + 1));
@@ -150,26 +186,45 @@ test("three users making random edits end up with the same board", async ({ brow
     await pages[0].waitForTimeout(1000);
     await dragAtOnce(pages, points[0], points.slice(1));
 
-    // deselect and reset the view so the screenshots can be compared
-    for (const page of pages) {
-        await page.keyboard.press("Escape");
-        await page.getByRole("button", { name: "Reset view" }).click();
-        await page.mouse.click(box.x + 5, box.y + 5);
-        await expect(page.getByRole("button", { name: "Delete", exact: true })).toBeDisabled();
-    }
-    await pages[0].waitForTimeout(2000);
-
-    // a new page only has what the server saved
-    const fresh = await openBoard(browser, users[0], boardId, 0);
-    const expected = await fresh.locator(".canvas canvas").screenshot();
-    await test.info().attach("saved", { body: expected, contentType: "image/png" });
-    for (const [i, page] of pages.entries()) {
-        const canvas = page.locator(".canvas canvas");
-        await expect.poll(async () => (await canvas.screenshot()).equals(expected), `user ${i + 1}`).toBe(true);
-    }
+    await expectSavedBoard(browser, users[0], boardId, pages);
 });
 
-test("typing in the same note at the same time keeps every character", async ({ browser, request }) => {
+test("edits made while cut off reach everyone once back online", async ({ browser, browserName, request }) => {
+    test.slow(browserName === "webkit");
+    const alice = await createUser(request);
+    const bob = await createUser(request);
+    const boardId = await createBoard(request, alice, [bob]);
+    let bobOnline = true;
+    const a = await openBoard(browser, alice, boardId);
+    const b = await openBoard(browser, bob, boardId, LATENCY_MS, () => bobOnline);
+    const addNote = (page: Page) => page.getByRole("button", { name: "Note", exact: true }).click();
+
+    // alice adds a note, then bob's connection drops while his own new note is on its way
+    await addNote(a);
+    await b.waitForTimeout(1000);
+    bobOnline = false;
+    await addNote(b);
+    const lost = b.getByText("Connection lost, reconnecting…");
+    await expect(lost).toBeVisible();
+
+    // cut off, bob moves his note off alice's and then hers, which she moves elsewhere and colors meanwhile
+    const [bobsCenter, ...bobsPoints] = await canvasPoints(b); // the message moved his canvas down
+    await drag(b, bobsCenter, bobsPoints[0]);
+    await drag(b, bobsCenter, bobsPoints[1]);
+    const [alicesCenter, ...alicesPoints] = await canvasPoints(a);
+    await drag(a, alicesCenter, alicesPoints[2]);
+    await a.getByRole("button", { name: "Color", exact: true }).click();
+    await a.getByRole("menuitem", { name: "Red", exact: true }).click();
+
+    bobOnline = true;
+    await expect(lost).toBeHidden();
+    await expectSavedBoard(browser, alice, boardId, [a, b]);
+    // with bob's note, which the server didn't get before the connection dropped
+    expect(await savedNodes(request, alice, boardId)).toHaveLength(2);
+});
+
+// CI also runs the tests tagged @stack against the app in docker compose
+test("typing in the same note at the same time keeps every character", { tag: "@stack" }, async ({ browser, request }) => {
     const alice = await createUser(request);
     const bob = await createUser(request);
     const boardId = await createBoard(request, alice, [bob]);

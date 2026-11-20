@@ -117,13 +117,41 @@ jobs:
     permissions:
       contents: read
 
+    env:
+      DB_NAME: notes_board
+      DB_USER: notes_board
+      DB_PASSWORD: notes_board
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Build the images
-        run: docker compose build
+      - name: Create a secret key
+        run: echo "SECRET_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      # The app as it's deployed: nginx in front of the backend and the database
+      - name: Build and start the app
+        run: docker compose up --build --detach --wait
+
+      - name: Wait for the backend
+        run: curl --fail --silent --show-error --retry 30 --retry-delay 1 --retry-all-errors --output /dev/null http://localhost:8080/api/docs
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies and chromium
+        working-directory: frontend
+        run: npm ci && npx playwright install --with-deps chromium
+
+      - name: Run the browser tests tagged @stack against the app
+        working-directory: frontend
+        run: npx playwright test --grep @stack --project chromium
         env:
-          DB_NAME: notes_board
-          DB_USER: notes_board
-          DB_PASSWORD: unused
-          SECRET_KEY: unused
+          BASE_URL: http://localhost:8080
+
+      - name: Show the app's logs
+        if: failure()
+        run: docker compose logs
