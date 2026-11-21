@@ -1,26 +1,6 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { errorMessage, readJson } from "./api";
-
-export interface User {
-    username: string;
-    full_name: string | null;
-    disabled: boolean | null;
-}
-
-interface AuthContextValue {
-    user: User | null;
-    // True while the refresh cookie is checked on page load
-    loading: boolean;
-    login: (username: string, password: string) => Promise<void>;
-    register: (username: string, password: string, fullName: string) => Promise<void>;
-    logout: () => Promise<void>;
-    authFetch: (input: string, init?: RequestInit) => Promise<Response>;
-    // For connections that can't go through authFetch, like a board's socket
-    accessToken: () => string | null;
-    renewAccessToken: () => Promise<string | null>;
-}
-
-const AuthContext = createContext<AuthContextValue | null>(null);
+import { AuthContext, type User } from "./auth";
 
 async function fetchUser(token: string) {
     const response = await fetch("/api/users/me/", {
@@ -127,10 +107,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }}>
         {children}
     </AuthContext>;
-}
-
-export function useAuth() {
-    const auth = useContext(AuthContext);
-    if (!auth) throw new Error("useAuth must be used inside an AuthProvider");
-    return auth;
 }

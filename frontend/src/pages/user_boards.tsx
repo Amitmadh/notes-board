@@ -1,7 +1,7 @@
 import { useEffect, useState, type SubmitEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { errorMessage, messageOf, readJson } from "../api";
-import { useAuth } from "../auth";
+import { useAuth } from "../hooks/useAuth";
 import AppHeader from "../components/appHeader";
 import { DeleteIcon } from "../components/icons";
 

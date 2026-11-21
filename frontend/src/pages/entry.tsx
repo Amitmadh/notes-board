@@ -1,6 +1,6 @@
 import { useState, type SubmitEvent } from "react";
 import { messageOf } from "../api";
-import { useAuth } from "../auth";
+import { useAuth } from "../hooks/useAuth";
 
 type Mode = "login" | "register";
 

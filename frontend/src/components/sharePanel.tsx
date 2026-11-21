@@ -1,7 +1,7 @@
 import { useEffect, useState, type SubmitEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { errorMessage, messageOf, readJson } from "../api";
-import { useAuth } from "../auth";
+import { useAuth } from "../hooks/useAuth";
 
 interface Member {
     username: string;

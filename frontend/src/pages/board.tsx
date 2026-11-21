@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import type { McNodeJSON } from "microcanvas";
 import { messageOf, readJson } from "../api";
-import { useAuth } from "../auth";
+import { useAuth } from "../hooks/useAuth";
 import AppHeader from "../components/appHeader";
 import CanvasComponent, { type CanvasHandle } from "../components/canvas";
 import SharePanel from "../components/sharePanel";

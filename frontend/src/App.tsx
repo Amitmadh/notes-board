@@ -1,6 +1,7 @@
 import './App.css'
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { AuthProvider, useAuth } from "./auth";
+import { useAuth } from "./hooks/useAuth";
+import { AuthProvider } from "./authProvider";
 import BoardPage from "./pages/board";
 import EntryPage from "./pages/entry";
 import UserBoardsPage from "./pages/user_boards";
