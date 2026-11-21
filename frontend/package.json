@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "microcanvas": "github:Amitmadh/microCanvas#v1.1.2",
-    "oxlint-tsgolint": "^7.0.2005",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.5",
@@ -30,6 +29,7 @@
     "@vitejs/plugin-react": "^6.1.2",
     "babel-plugin-react-compiler": "^1.0.0",
     "oxlint": "^1.89.0",
+    "oxlint-tsgolint": "^7.0.2005",
     "typescript": "~7.0.2",
     "vite": "^8.3.5",
     "vitest": "^5.1.1"

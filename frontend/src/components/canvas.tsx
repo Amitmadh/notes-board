@@ -165,7 +165,8 @@ function CanvasComponent({
     };
 
     const drawPeers = (board: Canvas) => {
-        for (const [peer, { username, selected }] of peersRef.current) {
+        for (const [peer, info] of peersRef.current) {
+            const { username, selected } = info;
             const node = selected === null ? undefined : nodesRef.current.get(selected);
             if (node) board.drawOutline(node, PEER_COLORS[peer % PEER_COLORS.length], username);
         }
@@ -358,8 +359,9 @@ function CanvasComponent({
     // around the middle, since a node turns around its position
     const rotateSelected = (angle: number) => {
         const board = boardRef.current;
-        const node = board?.selected;
-        if (!board || !node) return;
+        if (!board) return;
+        const node = board.selected;
+        if (!node) return;
         const { x, y, width, height } = node.getLocalBounds();
         const middle = { x: x + width / 2, y: y + height / 2 };
         const before = node.localToBoard(middle);

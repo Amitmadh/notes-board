@@ -48,7 +48,7 @@ function UserBoardsPage() {
                 body: JSON.stringify({ name: name.trim() }),
             });
             const board = await readJson<Board>(response, "Couldn't create the board");
-            navigate(`/boards/${board.id}`);
+            void navigate(`/boards/${board.id}`);
         } catch (err) {
             setError(messageOf(err));
         } finally {
